@@ -198,6 +198,15 @@ func main() {
 	app := &cli.App{
 		Name:  "psjungle",
 		Usage: "Display process trees for PIDs, ports, process names, or regex patterns",
+		UsageText: `psjungle [options] [PID|:port|name|/pattern]
+
+EXAMPLES:
+   psjungle 1234               Display process tree for PID 1234
+   psjungle :8080              Display process trees for processes listening on port 8080
+   psjungle node               Display process trees for processes with "node" in their name
+   psjungle "/node.*8080"       Display process trees for processes matching regex pattern
+   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)
+   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
