@@ -419,16 +419,66 @@ func formatMemory(memoryKB uint64) string {
 
 // printProcessTree prints the process tree with proper indentation and highlighting
 func printProcessTree(node *ProcessNode, targetPid int) error {
-	// Create indentation based on depth
-	indent := ""
-	for i := 0; i < node.Depth; i++ {
-		indent += "  "
+	// Print the current node with proper tree characters
+	printNodeWithTree(node, targetPid, []*ProcessNode{})
+	return nil
+}
+
+// buildTreePrefix creates a tree prefix with Unicode characters for visual representation
+func buildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
+	if node.Depth == 0 {
+		return ""
 	}
 
-	// Add tree characters for visual representation
-	if node.Depth > 0 {
-		indent += "-+- "
+	var prefix strings.Builder
+	// Create a slice of ancestors from root to parent of current node
+	ancestors := []*ProcessNode{}
+	current := node.Parent
+	for current != nil {
+		ancestors = append([]*ProcessNode{current}, ancestors...)
+		current = current.Parent
 	}
+
+	// Build the prefix by traversing ancestors
+	for i := 0; i < len(ancestors); i++ {
+		if i == len(ancestors)-1 {
+			// This is the parent of the current node
+			// Check if there are more siblings (children after this node)
+			if len(nextSiblings) > 0 {
+				prefix.WriteString("├── ")
+			} else {
+				prefix.WriteString("└── ")
+			}
+		} else {
+			// These are ancestors further up the tree
+			// Check if they have more children after their current child branch
+			hasMoreChildren := false
+			ancestor := ancestors[i]
+			if ancestor.Parent != nil {
+				// Find this ancestor in its parent's children list and check if it's the last one
+				for j, child := range ancestor.Parent.Children {
+					if child == ancestor && j < len(ancestor.Parent.Children)-1 {
+						hasMoreChildren = true
+						break
+					}
+				}
+			}
+
+			if hasMoreChildren {
+				prefix.WriteString("│   ")
+			} else {
+				prefix.WriteString("    ")
+			}
+		}
+	}
+
+	return prefix.String()
+}
+
+// printNodeWithTree recursively prints nodes with Unicode tree characters
+func printNodeWithTree(node *ProcessNode, targetPid int, siblings []*ProcessNode) {
+	// Create the tree prefix based on the node's position in the tree
+	prefix := buildTreePrefix(node, siblings)
 
 	// Get process details
 	pid := int(node.Process.Pid)
@@ -466,19 +516,21 @@ func printProcessTree(node *ProcessNode, targetPid int) error {
 	// Print the process with highlighting if it's the target PID
 	// Format similar to ps aux: PID, CPU%, MEM%, COMMAND
 	if node.IsTarget {
-		fmt.Printf("%s\033[32m%d %.1f %s %s\033[0m\n", indent, pid, cpuPercent, memStr, cmdline)
+		fmt.Printf("%s\033[32m%d %.1f %s %s\033[0m\n", prefix, pid, cpuPercent, memStr, cmdline)
 	} else {
-		fmt.Printf("%s%d %.1f %s %s\n", indent, pid, cpuPercent, memStr, cmdline)
+		fmt.Printf("%s%d %.1f %s %s\n", prefix, pid, cpuPercent, memStr, cmdline)
 	}
 
-	// Print children
-	for _, child := range node.Children {
-		if err := printProcessTree(child, targetPid); err != nil {
-			return err
+	// Print children with proper tree characters
+	for i, child := range node.Children {
+		// Create a slice of siblings for this child (all children of the same parent)
+		// Mark which siblings come after this child
+		var nextSiblings []*ProcessNode
+		for j := i + 1; j < len(node.Children); j++ {
+			nextSiblings = append(nextSiblings, node.Children[j])
 		}
+		printNodeWithTree(child, targetPid, nextSiblings)
 	}
-
-	return nil
 }
 
 // findTargetNode recursively finds the target node in the tree
