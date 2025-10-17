@@ -1,38 +1,64 @@
 # psjungle
 
-A process tree visualization tool for macOS, similar to `pstree` but with additional features.
+A pure-Go process tree visualization tool for macOS and Linux. It works like `pstree`, but includes richer filtering options, human-readable metrics, and an interactive watch mode without shelling out to `lsof`, `pgrep`, or other external binaries.
 
 ## Features
 
-- Display process trees for PIDs, ports, process names, or regex patterns
-- Shows complete process lines with all arguments (similar to `ps auxww`)
-- Human-readable memory formatting:
-  - KB for values under 1000KB
-  - MB for values under 1000MB (2 decimal places for <10MB, 1 decimal place for ≥10MB)
-  - GB for values 1000MB and above (2 decimal places for <10GB, 1 decimal place for ≥10GB)
-- Color highlighting of target processes
-- Watch mode for continuous monitoring
+- Display focused process trees by PID, TCP/UDP port (`:8080`), case-insensitive name fragment (`node`), or full regex (`/node.*8080`).
+- Full command line output (similar to `ps auxww`) with live CPU% and human-readable memory usage (KB/MB/GB).
+- Highlights the target process in green.
+- Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
+- Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
-## Usage
+## Building & Running
+
+```bash
+# Run from source
+go run ./cmd/psjungle --help
+
+# Build a binary
+go build ./cmd/psjungle
+```
+
+Use the resulting binary just like any other CLI tool:
 
 ```
 psjungle [options] [PID|:port|name|/pattern]
+```
 
-EXAMPLES:
-   psjungle 1234               Display process tree for PID 1234
-   psjungle :8080              Display process trees for processes listening on port 8080
-   psjungle node               Display process trees for processes with "node" in their name
-   psjungle "/node.*8080"       Display process trees for processes matching regex pattern
-   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)
-   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)
+### Examples
+
+```
+psjungle 1234                # Inspect the tree for PID 1234
+psjungle :8080               # Show trees for processes bound to port 8080
+psjungle node                # Match processes whose name contains "node" (case-insensitive)
+psjungle "/node.*8080"        # Regex match against command line / name
+psjungle -w 1234             # Refresh every 2 seconds (default) while showing PID 1234
+psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
+```
+
+When experimenting with watch mode in scripts or tests, prepend the command with `timeout` to stop it automatically:
+
+```bash
+timeout 10s psjungle -w 2 1234
 ```
 
 ## Output Format
 
-The output includes:
-1. PID (Process ID)
-2. CPU% (CPU usage percentage)
-3. Memory usage (human-readable format: KB, MB, or GB)
-4. Complete command line with arguments
+Each line prints: `PID CPU% Memory CommandLine`. Memory is displayed in the smallest unit that keeps the value above three digits (KB, MB, GB). Target processes are highlighted in green, and tree glyphs (`├──`, `└──`, `│`) visualize parent/child relationships.
 
-Target processes are highlighted in green.
+## Project Layout
+
+- `cmd/psjungle`: CLI entrypoint.
+- `internal/psjungle`: Core tree-building, rendering, and lookup logic.
+- `internal/psjungle_test`: Black-box tests that exercise the exported API.
+
+## Testing
+
+Run the full test suite with:
+
+```bash
+go test ./...
+```
+
+Because the code interacts with the local process table, a few tests skip automatically if the necessary process information is unavailable (for example, when PID 1 cannot be inspected).*** End Patch
