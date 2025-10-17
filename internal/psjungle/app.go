@@ -337,7 +337,10 @@ func formatMemory(memoryKB uint64) string {
 }
 
 // BuildTreePrefix creates a tree prefix with Unicode characters for visual representation
-func BuildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
+func BuildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode, flatMode bool) string {
+	if flatMode {
+		return ""
+	}
 	if node.Depth == 0 {
 		return ""
 	}
@@ -386,8 +389,8 @@ func BuildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
 }
 
 // printNodeWithTree prints the process tree nodes with proper indentation
-func printNodeWithTree(node *ProcessNode, targetPid int, nextSiblings []*ProcessNode) {
-	prefix := BuildTreePrefix(node, nextSiblings)
+func printNodeWithTree(node *ProcessNode, targetPid int, nextSiblings []*ProcessNode, flatMode bool) {
+	prefix := BuildTreePrefix(node, nextSiblings, flatMode)
 
 	// Get process info
 	pid := node.Process.Pid
@@ -423,7 +426,7 @@ func printNodeWithTree(node *ProcessNode, targetPid int, nextSiblings []*Process
 		for j := i + 1; j < len(node.Children); j++ {
 			siblings = append(siblings, node.Children[j])
 		}
-		printNodeWithTree(child, targetPid, siblings)
+		printNodeWithTree(child, targetPid, siblings, flatMode)
 	}
 }
 
@@ -443,7 +446,7 @@ func findTargetNode(node *ProcessNode, targetPid int) *ProcessNode {
 }
 
 // pstreeBoth displays the process tree for a given PID using gopsutil
-func pstreeBoth(targetPid int) error {
+func pstreeBoth(targetPid int, flatMode bool) error {
 	// Get all processes
 	procMap, err := getAllProcesses()
 	if err != nil {
@@ -463,7 +466,7 @@ func pstreeBoth(targetPid int) error {
 	}
 
 	// Print the entire tree (it's already focused)
-	printNodeWithTree(tree, targetPid, []*ProcessNode{})
+	printNodeWithTree(tree, targetPid, []*ProcessNode{}, flatMode)
 	return nil
 }
 
@@ -499,7 +502,7 @@ func getProcessTreePids(targetPid int) []int {
 }
 
 // runPstree dispatches based on user input and prints matching trees.
-func runPstree(input string) error {
+func runPstree(input string, flatMode bool) error {
 	var pids []int
 	var err error
 
@@ -558,7 +561,7 @@ func runPstree(input string) error {
 		if len(pids) > 1 {
 			fmt.Printf("Process tree for PID %d:\n", pid)
 		}
-		if err := pstreeBoth(pid); err != nil {
+		if err := pstreeBoth(pid, flatMode); err != nil {
 			fmt.Printf("Error for PID %d: %v\n", pid, err)
 		}
 
@@ -591,6 +594,12 @@ func NewApp() *cli.App {
 				Value:   "",
 				Usage:   "Watch mode with refresh interval (use -w=2 or -w2 for 2 seconds refresh, then provide PID/port/name)",
 			},
+			&cli.BoolFlag{
+				Name:    "flat",
+				Aliases: []string{"f"},
+				Value:   false,
+				Usage:   "Flat mode - removes unicode indentation and lists everything left aligned",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			if c.NArg() < 1 {
@@ -600,6 +609,7 @@ func NewApp() *cli.App {
 
 			input := c.Args().First()
 			watchValue := c.String("watch")
+			flatMode := c.Bool("flat")
 
 			// Check if watch flag was explicitly set
 			if c.IsSet("watch") {
@@ -623,7 +633,7 @@ func NewApp() *cli.App {
 					} else {
 						fmt.Printf("Every %.1fs: psjungle -w%s %s\n\n", float64(watchInterval), watchValue, input)
 					}
-					if err := runPstree(input); err != nil {
+					if err := runPstree(input, flatMode); err != nil {
 						return cli.Exit(err.Error(), 1)
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
@@ -631,7 +641,7 @@ func NewApp() *cli.App {
 			}
 
 			// Normal mode
-			if err := runPstree(input); err != nil {
+			if err := runPstree(input, flatMode); err != nil {
 				return cli.Exit(err.Error(), 1)
 			}
 
