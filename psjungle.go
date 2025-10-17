@@ -401,26 +401,48 @@ func printProcessTree(node *ProcessNode, targetPid int) error {
 	for i := 0; i < node.Depth; i++ {
 		indent += "  "
 	}
-	
+
 	// Add tree characters for visual representation
 	if node.Depth > 0 {
 		indent += "-+- "
 	}
 
-	// Get process name
-	name, err := node.Process.Name()
-	if err != nil {
-		name = "unknown"
-	}
-
-	// Get process PID
+	// Get process details
 	pid := int(node.Process.Pid)
 
-	// Print the process with highlighting if it's the target PID
-	if node.IsTarget {
-		fmt.Printf("%s\033[32m%d %s\033[0m\n", indent, pid, name)
+	// Get command line
+	cmdline, err := node.Process.Cmdline()
+	if err != nil || cmdline == "" {
+		// If cmdline is empty or errored, fall back to the process name
+		name, err := node.Process.Name()
+		if err != nil || name == "" {
+			cmdline = "[unknown]"
+		} else {
+			cmdline = name
+		}
+	}
+
+	// Get CPU percent
+	cpuPercent, err := node.Process.CPUPercent()
+	if err != nil {
+		cpuPercent = 0.0
+	}
+
+	// Get memory info
+	memInfo, err := node.Process.MemoryInfo()
+	var rss uint64
+	if err != nil {
+		rss = 0
 	} else {
-		fmt.Printf("%s%d %s\n", indent, pid, name)
+		rss = memInfo.RSS / 1024 // Convert to KB
+	}
+
+	// Print the process with highlighting if it's the target PID
+	// Format similar to ps aux: PID, CPU%, MEM%, COMMAND
+	if node.IsTarget {
+		fmt.Printf("%s\033[32m%d %.1f %d %s\033[0m\n", indent, pid, cpuPercent, rss, cmdline)
+	} else {
+		fmt.Printf("%s%d %.1f %d %s\n", indent, pid, cpuPercent, rss, cmdline)
 	}
 
 	// Print children
