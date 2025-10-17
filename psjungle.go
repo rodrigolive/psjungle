@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shirou/gopsutil/v3/process"
 	"github.com/urfave/cli/v2"
 )
 
@@ -90,54 +91,385 @@ func getPidsByRegex(pattern string) ([]int, error) {
 	return pids, nil
 }
 
-func pstreeBoth(targetPid int) error {
-	cmd := exec.Command("pstree", "-w", "-p", strconv.Itoa(targetPid))
-	stdout, err := cmd.StdoutPipe()
+// ProcessNode represents a node in the process tree
+type ProcessNode struct {
+	Process   *process.Process
+	Children  []*ProcessNode
+	Depth     int
+	IsTarget  bool
+	Parent    *ProcessNode
+}
+
+// getAllProcesses returns a map of all processes indexed by PID
+func getAllProcesses() (map[int32]*process.Process, error) {
+	processes, err := process.Processes()
 	if err != nil {
-		return fmt.Errorf("failed to create pipe: %v", err)
+		return nil, err
+	}
+	
+	procMap := make(map[int32]*process.Process)
+	for _, proc := range processes {
+		procMap[proc.Pid] = proc
+	}
+	
+	return procMap, nil
+}
+
+// buildProcessTree recursively builds a process tree starting from the given PID
+func buildProcessTree(targetPid int, currentPid int32, depth int, procMap map[int32]*process.Process, visited map[int32]bool) *ProcessNode {
+	// Avoid infinite loops
+	if visited[currentPid] {
+		return nil
+	}
+	visited[currentPid] = true
+	
+	// Try to get process from procMap first, then directly
+	proc, exists := procMap[currentPid]
+	if !exists {
+		// Process not found in our map, but it might still exist
+		// Let's try to get it directly
+		p, err := process.NewProcess(currentPid)
+		if err != nil {
+			return nil
+		}
+		proc = p
 	}
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start command: %v", err)
+	node := &ProcessNode{
+		Process:  proc,
+		Children: []*ProcessNode{},
+		Depth:    depth,
+		IsTarget: int(currentPid) == targetPid,
+		Parent:   nil,
 	}
 
-	scanner := bufio.NewScanner(stdout)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Replace zero-padded PIDs with non-padded PIDs and highlight target PID
-		pidPattern := fmt.Sprintf(`\b0*%d\b`, targetPid)
-		targetPidRegex := regexp.MustCompile(pidPattern)
-
-		// First highlight the target PID
-		highlightedLine := targetPidRegex.ReplaceAllStringFunc(line, func(match string) string {
-			return fmt.Sprintf("\033[32m%d\033[0m", targetPid)
-		})
-
-		// Then remove leading zeros from all other PIDs
-		cleanedLine := regexp.MustCompile(`\b0+(\d+)`).ReplaceAllStringFunc(highlightedLine, func(match string) string {
-			// Extract the number part and convert it back without leading zeros
-			numStr := regexp.MustCompile(`0*(\d+)`).FindStringSubmatch(match)[1]
-			num, _ := strconv.Atoi(numStr)
-			// If this is our target PID, it's already highlighted, so return as is
-			if num == targetPid {
-				return match
+	// Instead of using proc.Children(), we'll iterate through all processes
+	// and find those that have currentPid as their parent
+	for _, p := range procMap {
+		// Skip if we've already visited this process
+		if visited[p.Pid] {
+			continue
+		}
+		
+		// Get the parent PID of this process
+		ppid, err := p.Ppid()
+		if err != nil {
+			// Skip processes where we can't get the parent PID
+			continue
+		}
+		
+		// If the parent PID matches currentPid, this is a child
+		if ppid == currentPid {
+			childNode := buildProcessTree(targetPid, p.Pid, depth+1, procMap, visited)
+			if childNode != nil {
+				childNode.Parent = node
+				node.Children = append(node.Children, childNode)
 			}
-			// Otherwise, just remove leading zeros
-			return strconv.Itoa(num)
-		})
-		fmt.Println(cleanedLine)
+		}
 	}
 
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	return node
+}
+
+
+
+// findParentChain finds the chain of parent processes for a target PID
+func findParentChain(targetPid int32, procMap map[int32]*process.Process) ([]int32, error) {
+	chain := []int32{}
+	currentPid := targetPid
+
+	// Traverse up the parent chain until we reach PID 1 or find a cycle
+	for currentPid > 1 {
+		// Try to get process from procMap first, then directly
+		proc, exists := procMap[currentPid]
+		if !exists {
+			// Process not found in our map, but it might still exist
+			// Let's try to get it directly
+			p, err := process.NewProcess(currentPid)
+			if err != nil {
+				// Process doesn't exist, break the chain
+				break
+			}
+			proc = p
+		}
+
+		ppid, err := proc.Ppid()
+		if err != nil {
+			break
+		}
+
+		// Prevent infinite loops
+		if ppid <= 1 || ppid == currentPid {
+			if ppid == 1 {
+				chain = append(chain, ppid)
+			}
+			break
+		}
+
+		chain = append(chain, ppid)
+		currentPid = ppid
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanner error: %v", err)
+	// Reverse the chain so it goes from root to target
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+
+	return chain, nil
+}
+
+// buildFocusedTree builds a tree focused on the target process and its ancestors/descendants
+func buildFocusedTree(targetPid int, procMap map[int32]*process.Process) *ProcessNode {
+	targetProc, exists := procMap[int32(targetPid)]
+	if !exists {
+		// Try to get target process directly
+		p, err := process.NewProcess(int32(targetPid))
+		if err != nil {
+			return nil
+		}
+		targetProc = p
+	}
+
+	// Find parent chain up to PID 1
+	parentChain, err := findParentChain(int32(targetPid), procMap)
+	if err != nil {
+		// If we can't get parents, just build a tree with the target process and its children
+		node := &ProcessNode{
+			Process:  targetProc,
+			Children: []*ProcessNode{},
+			Depth:    0,
+			IsTarget: true,
+			Parent:   nil,
+		}
+		visited := make(map[int32]bool)
+		addChildren(node, procMap, visited, 1)
+		return node
+	}
+
+	// If parentChain is empty, build a minimal tree
+	if len(parentChain) == 0 {
+		node := &ProcessNode{
+			Process:  targetProc,
+			Children: []*ProcessNode{},
+			Depth:    0,
+			IsTarget: true,
+			Parent:   nil,
+		}
+		visited := make(map[int32]bool)
+		addChildren(node, procMap, visited, 1)
+		return node
+	}
+
+	// Build the direct chain from PID 1 to target process
+	var rootNode *ProcessNode
+	var currentNode *ProcessNode
+
+	// Start with PID 1
+	rootProc, exists := procMap[1]
+	if !exists {
+		p, err := process.NewProcess(1)
+		if err != nil {
+			// If we can't get PID 1, just build a tree with the target process and its children
+			node := &ProcessNode{
+				Process:  targetProc,
+				Children: []*ProcessNode{},
+				Depth:    0,
+				IsTarget: true,
+				Parent:   nil,
+			}
+			visited := make(map[int32]bool)
+			addChildren(node, procMap, visited, 1)
+			return node
+		}
+		rootProc = p
+	}
+
+	rootNode = &ProcessNode{
+		Process:  rootProc,
+		Children: []*ProcessNode{},
+		Depth:    0,
+		IsTarget: false,
+		Parent:   nil,
+	}
+	currentNode = rootNode
+
+	// Build nodes for each process in the parent chain (excluding PID 1 which we already created)
+	for _, pid := range parentChain {
+		// Skip PID 1 as we already created it
+		if pid == 1 {
+			continue
+		}
+
+		// Skip if this is the target PID, we'll add it separately
+		if int(pid) == targetPid {
+			continue
+		}
+
+		proc, exists := procMap[pid]
+		if !exists {
+			p, err := process.NewProcess(pid)
+			if err != nil {
+				break
+			}
+			proc = p
+		}
+
+		node := &ProcessNode{
+			Process:  proc,
+			Children: []*ProcessNode{},
+			Depth:    0,
+			IsTarget: false,
+			Parent:   currentNode,
+		}
+
+		currentNode.Children = append(currentNode.Children, node)
+		currentNode = node
+	}
+
+	// Add the target node
+	targetNode := &ProcessNode{
+		Process:  targetProc,
+		Children: []*ProcessNode{},
+		Depth:    0,
+		IsTarget: true,
+		Parent:   currentNode,
+	}
+	currentNode.Children = append(currentNode.Children, targetNode)
+	currentNode = targetNode
+
+	// Add children of the target process
+	visited := make(map[int32]bool)
+	addChildren(targetNode, procMap, visited, targetNode.Depth+1)
+
+	// Adjust depths to be positive starting from root
+	adjustDepths(rootNode, 0)
+
+	return rootNode
+}
+
+// addChildren recursively adds direct children to a node
+func addChildren(node *ProcessNode, procMap map[int32]*process.Process, visited map[int32]bool, depth int) {
+	// Avoid infinite loops
+	if visited[node.Process.Pid] {
+		return
+	}
+	visited[node.Process.Pid] = true
+
+	currentPid := node.Process.Pid
+
+	// Iterate through all processes to find direct children
+	for _, proc := range procMap {
+		// Skip already visited processes
+		if visited[proc.Pid] {
+			continue
+		}
+
+		ppid, err := proc.Ppid()
+		if err != nil {
+			continue
+		}
+
+		// If the parent PID matches currentPid, this is a direct child
+		if ppid == currentPid {
+			childNode := &ProcessNode{
+				Process:  proc,
+				Children: []*ProcessNode{},
+				Depth:    depth,
+				IsTarget: false,
+				Parent:   node,
+			}
+
+			node.Children = append(node.Children, childNode)
+			// Recursively add children of this child
+			addChildren(childNode, procMap, visited, depth+1)
+		}
+	}
+}
+
+// adjustDepths adjusts node depths to start from 0 at the root
+func adjustDepths(node *ProcessNode, depth int) {
+	node.Depth = depth
+	for _, child := range node.Children {
+		adjustDepths(child, depth+1)
+	}
+}
+
+// printProcessTree prints the process tree with proper indentation and highlighting
+func printProcessTree(node *ProcessNode, targetPid int) error {
+	// Create indentation based on depth
+	indent := ""
+	for i := 0; i < node.Depth; i++ {
+		indent += "  "
+	}
+	
+	// Add tree characters for visual representation
+	if node.Depth > 0 {
+		indent += "-+- "
+	}
+
+	// Get process name
+	name, err := node.Process.Name()
+	if err != nil {
+		name = "unknown"
+	}
+
+	// Get process PID
+	pid := int(node.Process.Pid)
+
+	// Print the process with highlighting if it's the target PID
+	if node.IsTarget {
+		fmt.Printf("%s\033[32m%d %s\033[0m\n", indent, pid, name)
+	} else {
+		fmt.Printf("%s%d %s\n", indent, pid, name)
+	}
+
+	// Print children
+	for _, child := range node.Children {
+		if err := printProcessTree(child, targetPid); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+// findTargetNode recursively finds the target node in the tree
+func findTargetNode(node *ProcessNode, targetPid int) *ProcessNode {
+	if int(node.Process.Pid) == targetPid {
+		return node
+	}
+	
+	for _, child := range node.Children {
+		if targetNode := findTargetNode(child, targetPid); targetNode != nil {
+			return targetNode
+		}
+	}
+	
+	return nil
+}
+
+// pstreeBoth displays the process tree for a given PID using gopsutil
+func pstreeBoth(targetPid int) error {
+	// Get all processes
+	procMap, err := getAllProcesses()
+	if err != nil {
+		return fmt.Errorf("failed to get all processes: %v", err)
+	}
+
+	// Check if target process exists
+	_, err = process.NewProcess(int32(targetPid))
+	if err != nil {
+		return fmt.Errorf("target process %d not found", targetPid)
+	}
+
+	// Build the focused tree containing the target process, its ancestors, and descendants
+	tree := buildFocusedTree(targetPid, procMap)
+	if tree == nil {
+		return fmt.Errorf("failed to build process tree for PID %d", targetPid)
+	}
+
+	// Print the entire tree (it's already focused)
+	return printProcessTree(tree, targetPid)
 }
 
 func runPstree(input string) error {
@@ -198,15 +530,7 @@ func main() {
 	app := &cli.App{
 		Name:  "psjungle",
 		Usage: "Display process trees for PIDs, ports, process names, or regex patterns",
-		UsageText: `psjungle [options] [PID|:port|name|/pattern]
-
-EXAMPLES:
-   psjungle 1234               Display process tree for PID 1234
-   psjungle :8080              Display process trees for processes listening on port 8080
-   psjungle node               Display process trees for processes with "node" in their name
-   psjungle "/node.*8080"       Display process trees for processes matching regex pattern
-   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)
-   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)`,
+		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",

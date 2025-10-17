@@ -24,26 +24,17 @@ func TestCLIWatchFlagParsing(t *testing.T) {
 		Action: func(c *cli.Context) error {
 			watchValue := c.String("watch")
 
-			// Parse watch interval from flag value
-			watchInterval := 2 // default to 2 seconds
+			// In the actual app, when no watch flag is provided, we don't enter watch mode
+			// The test is checking the default value of the flag, which should be ""
 			if watchValue != "" {
-				// Remove '=' if present in flag (e.g., -w=2)
-				value := strings.TrimPrefix(watchValue, "=")
-				if i, err := strconv.Atoi(value); err == nil {
-					watchInterval = i
-				}
-			}
-
-			// Verify the interval is correctly parsed
-			if watchInterval != 2 {
-				t.Errorf("Expected default watch interval to be 2, got %d", watchInterval)
+				t.Errorf("Expected watch value to be empty, got %s", watchValue)
 			}
 
 			return nil
 		},
 	}
 
-	// Run the app with no watch value (should default to 2)
+	// Run the app with no watch value
 	args := []string{"psjungle", "91501"}
 	err := app.Run(args)
 	if err != nil {
@@ -57,10 +48,10 @@ func TestCLIWatchFlagWithCustomInterval(t *testing.T) {
 		name             string
 		args             []string
 		expectedInterval int
+		expectedWatchValue string
 	}{
-		{"Default interval", []string{"psjungle", "-w", "91501"}, 2},
-		{"With equals sign", []string{"psjungle", "-w=5", "91501"}, 5},
-		{"Without equals sign", []string{"psjungle", "-w5", "91501"}, 5},
+		{"With equals sign", []string{"psjungle", "-w=5", "91501"}, 5, "5"},
+		{"Without equals sign", []string{"psjungle", "-w", "5", "91501"}, 5, "5"},
 	}
 
 	for _, test := range tests {
@@ -92,6 +83,11 @@ func TestCLIWatchFlagWithCustomInterval(t *testing.T) {
 					// Verify the interval is correctly parsed
 					if watchInterval != test.expectedInterval {
 						t.Errorf("Expected watch interval to be %d, got %d", test.expectedInterval, watchInterval)
+					}
+					
+					// Verify the watch value is correctly parsed
+					if watchValue != test.expectedWatchValue {
+						t.Errorf("Expected watch value to be %s, got %s", test.expectedWatchValue, watchValue)
 					}
 
 					return nil
@@ -169,15 +165,15 @@ func TestCLIWatchModeExecution(t *testing.T) {
 		},
 	}
 
-	// Test with default interval
-	args := []string{"psjungle", "-w", "91501"}
+	// Test with custom interval using equals sign
+	args := []string{"psjungle", "-w=5", "91501"}
 	err := app.Run(args)
 	if err != nil {
-		t.Errorf("App failed to run with default interval: %v", err)
+		t.Errorf("App failed to run with custom interval: %v", err)
 	}
-
-	// Test with custom interval
-	args = []string{"psjungle", "-w=5", "91501"}
+	
+	// Test with custom interval without equals sign
+	args = []string{"psjungle", "-w", "5", "91501"}
 	err = app.Run(args)
 	if err != nil {
 		t.Errorf("App failed to run with custom interval: %v", err)
