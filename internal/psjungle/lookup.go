@@ -2,6 +2,7 @@ package psjungle
 
 import (
 	"context"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,12 +68,18 @@ func ByRegex(pattern string) ([]int, error) {
 
 	seen := make(map[int32]struct{})
 	var matches []int
+	currentPid := int32(os.Getpid())
 
 	for _, proc := range procs {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+		}
+
+		// Skip the current process (psjungle itself)
+		if proc.Pid == currentPid {
+			continue
 		}
 
 		cmdline, err := proc.CmdlineWithContext(ctx)
