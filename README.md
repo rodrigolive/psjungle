@@ -1,6 +1,15 @@
 # psjungle
 
-A pure-Go process tree visualization tool for macOS and Linux. It works like `pstree`, but includes richer filtering options, human-readable metrics, and an interactive watch mode without shelling out to `lsof`, `pgrep`, or other external binaries.
+I built psjungle because I got fed up with juggling five different commands
+every time a process on my laptop started misbehaving. On macOS I would bounce
+between `ps`, `pgrep`, `lsof`, `pstree`, Activity Monitor...
+
+`psjungle` scratches that itch. It provides a `pstree`-like view, but adds live
+CPU%, human-readable memory (KB/MB/GB), and robust filtering: by PID (`1234`),
+TCP/UDP port (`:8080`), name fragment (`node`), or full regex (`/node.*8080`).
+
+No shell-outs—no calls to `lsof`, `pgrep`, or others. Just pure Go via
+`gopsutil` for consistent cross-platform behavior.
 
 ## Features
 
@@ -10,25 +19,29 @@ A pure-Go process tree visualization tool for macOS and Linux. It works like `ps
 - Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
 - Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
-## Building & Running
+## Installation
+
+With Go installed:
 
 ```bash
-# Run from source
-go run ./cmd/psjungle --help
+go install ./cmd/psjungle
+```
 
-# Build a binary
+Or build a binary:
+
+```bash
 go build ./cmd/psjungle
 ```
 
-Use the resulting binary just like any other CLI tool:
+## Usage
 
-```
+```bash
 psjungle [options] [PID|:port|name|/pattern]
 ```
 
-### Examples
+Examples:
 
-```
+```bash
 psjungle 1234                # Inspect the tree for PID 1234
 psjungle :8080               # Show trees for processes bound to port 8080
 psjungle node                # Match processes whose name contains "node" (case-insensitive)
@@ -37,7 +50,7 @@ psjungle -w 1234             # Refresh every 2 seconds (default) while showing P
 psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
 ```
 
-When experimenting with watch mode in scripts or tests, prepend the command with `timeout` to stop it automatically:
+For testing watch mode in scripts:
 
 ```bash
 timeout 10s psjungle -w 2 1234
@@ -45,20 +58,21 @@ timeout 10s psjungle -w 2 1234
 
 ## Output Format
 
-Each line prints: `PID CPU% Memory CommandLine`. Memory is displayed in the smallest unit that keeps the value above three digits (KB, MB, GB). Target processes are highlighted in green, and tree glyphs (`├──`, `└──`, `│`) visualize parent/child relationships.
+Each line prints: `PID CPU% Memory CommandLine`—similar to `ps aux`, but with a process tree view.
+
+Memory is displayed in human-readable units (KB/MB/GB). Target processes are highlighted in green.
 
 ## Project Layout
 
 - `cmd/psjungle`: CLI entrypoint.
-- `internal/psjungle`: Core tree-building, rendering, and lookup logic.
-- `internal/psjungle_test`: Black-box tests that exercise the exported API.
+- `internal/psjungle`: Core tree-building and process lookup logic.
 
 ## Testing
-
-Run the full test suite with:
 
 ```bash
 go test ./...
 ```
 
-Because the code interacts with the local process table, a few tests skip automatically if the necessary process information is unavailable (for example, when PID 1 cannot be inspected).*** End Patch
+Because the code interacts with the local process table, a few tests skip
+automatically if the necessary process information is unavailable (for example,
+when PID 1 cannot be inspected).
