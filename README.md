@@ -1,5 +1,26 @@
 # psjungle
 
+```
+                              ****
+                            ********
+                           **  ******
+                            *   ******     ******
+   PSJUNGLE  V1.0               ******   *********
+                                 ****  *****   ***
+                                 ***  ***     **
+                           *************       *
+                         ******************
+                        *****   H*****H*******
+                        ***     H-___-H  *********
+                         ***    H     H      *******
+                          **    H-___-H        *****
+                            *   H     H         ****
+                                H     H         ***
+                                H-___-H         **
+                                H     H         *
+                                H-___-H
+```
+
 I built psjungle because I got fed up with juggling five different commands
 every time a process on my laptop started misbehaving. On macOS I would bounce
 between `ps`, `pgrep`, `lsof`, `pstree`, Activity Monitor...
@@ -8,7 +29,7 @@ between `ps`, `pgrep`, `lsof`, `pstree`, Activity Monitor...
 CPU%, human-readable memory (KB/MB/GB), and robust filtering: by PID (`1234`),
 TCP/UDP port (`:8080`), name fragment (`node`), or full regex (`/node.*8080`).
 
-No shell-outs—no calls to `lsof`, `pgrep`, or others. Just pure Go via
+No shell-outs, no calls to `lsof`, `pgrep`, or others. Just pure Go via
 `gopsutil` for consistent cross-platform behavior.
 
 ## Features
