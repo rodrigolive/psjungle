@@ -572,6 +572,37 @@ func pstreeBoth(targetPid int) error {
 	return printProcessTree(tree, targetPid)
 }
 
+// collectProcessTreePids recursively collects all PIDs in a process tree
+func collectProcessTreePids(node *ProcessNode) []int {
+	var pids []int
+	pids = append(pids, int(node.Process.Pid))
+
+	for _, child := range node.Children {
+		childPids := collectProcessTreePids(child)
+		pids = append(pids, childPids...)
+	}
+
+	return pids
+}
+
+// getProcessTreePids builds a tree for the target PID and returns all PIDs in that tree
+func getProcessTreePids(targetPid int) []int {
+	// Get all processes
+	procMap, err := getAllProcesses()
+	if err != nil {
+		return []int{targetPid}
+	}
+
+	// Build the focused tree
+	tree := buildFocusedTree(targetPid, procMap)
+	if tree == nil {
+		return []int{targetPid}
+	}
+
+	// Collect all PIDs in the tree
+	return collectProcessTreePids(tree)
+}
+
 func runPstree(input string) error {
 	var pids []int
 	var err error
@@ -610,14 +641,35 @@ func runPstree(input string) error {
 		os.Exit(1)
 	}
 
+	// For port matching, we want to avoid showing duplicate trees
+	// Keep track of processes already shown in a tree
+	var shownPids map[int]bool
+	if strings.HasPrefix(input, ":") {
+		shownPids = make(map[int]bool)
+	}
+
 	// Display process trees for all matching PIDs
 	for _, pid := range pids {
+		// Skip if this process is already part of a previously displayed tree (for port matching)
+		if strings.HasPrefix(input, ":") && shownPids[pid] {
+			continue
+		}
+
 		if len(pids) > 1 {
 			fmt.Printf("Process tree for PID %d:\n", pid)
 		}
 		if err := pstreeBoth(pid); err != nil {
 			fmt.Printf("Error for PID %d: %v\n", pid, err)
 		}
+
+		// For port matching, mark all processes in this tree as shown
+		if strings.HasPrefix(input, ":") {
+			treePids := getProcessTreePids(pid)
+			for _, treePid := range treePids {
+				shownPids[treePid] = true
+			}
+		}
+
 		if len(pids) > 1 {
 			fmt.Println()
 		}
