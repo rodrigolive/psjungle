@@ -69,12 +69,7 @@ psjungle node                # Match processes whose name contains "node" (case-
 psjungle "/node.*8080"        # Regex match against command line / name
 psjungle -w 1234             # Refresh every 2 seconds (default) while showing PID 1234
 psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
-```
-
-For testing watch mode in scripts:
-
-```bash
-timeout 10s psjungle -w 2 1234
+psjungle -w2 1234            # Refresh every 2 seconds while showing PID 1234 (alternative format)
 ```
 
 ## Output Format
