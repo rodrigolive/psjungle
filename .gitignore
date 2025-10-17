@@ -7,3 +7,8 @@ logs/
 # Claude Code files
 .claude/
 AGENTS.md
+
+# Temporary files and directories
+.agent/
+ff.svg
+main
