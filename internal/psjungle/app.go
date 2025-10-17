@@ -586,13 +586,13 @@ func NewApp() *cli.App {
 	app := &cli.App{
 		Name:      "psjungle",
 		Usage:     "Display process trees for PIDs, ports, process names, or regex patterns",
-		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)\n\nOutput format: PID CPU% MemoryUsage CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB)",
+		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n\nOutput format: PID CPU% MemoryUsage CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
 				Aliases: []string{"w"},
 				Value:   "",
-				Usage:   "Watch mode with refresh interval (use -w=2 or -w2 for 2 seconds refresh, then provide PID/port/name)",
+				Usage:   "Watch mode with refresh interval (use -w=2, -w2, or -w 2 for 2 seconds refresh, then provide PID/port/name)",
 			},
 			&cli.BoolFlag{
 				Name:    "flat",
@@ -602,12 +602,6 @@ func NewApp() *cli.App {
 			},
 		},
 		Action: func(c *cli.Context) error {
-			if c.NArg() < 1 {
-				cli.ShowAppHelp(c)
-				return cli.Exit("", 1)
-			}
-
-			input := c.Args().First()
 			watchValue := c.String("watch")
 			flatMode := c.Bool("flat")
 
@@ -623,22 +617,38 @@ func NewApp() *cli.App {
 					}
 				}
 
+				// Get the target from the next argument if available
+				var target string
+				if c.NArg() >= 1 {
+					// If we have at least one argument, the first one is the target
+					target = c.Args().Get(0)
+				} else {
+					// No target provided
+					cli.ShowAppHelp(c)
+					return cli.Exit("Watch mode requires a target PID/port/name", 1)
+				}
+
 				// Watch mode
 				for {
 					// Clear screen
 					fmt.Print("\033[H\033[2J")
 					// Print status line
-					if watchValue == "" {
-						fmt.Printf("Every 2.0s: psjungle -w %s\n\n", input)
-					} else {
-						fmt.Printf("Every %.1fs: psjungle -w%s %s\n\n", float64(watchInterval), watchValue, input)
-					}
-					if err := runPstree(input, flatMode); err != nil {
+					fmt.Printf("Every %.1fs: psjungle -w%s %s\n\n", float64(watchInterval), watchValue, target)
+					if err := runPstree(target, flatMode); err != nil {
 						return cli.Exit(err.Error(), 1)
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
 				}
 			}
+
+			// If we get here and have no arguments, show help
+			if c.NArg() < 1 {
+				cli.ShowAppHelp(c)
+				return cli.Exit("", 1)
+			}
+
+			// Get the input (first non-flag argument)
+			input := c.Args().Get(0)
 
 			// Normal mode
 			if err := runPstree(input, flatMode); err != nil {
