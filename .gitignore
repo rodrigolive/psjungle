@@ -3,3 +3,7 @@ logs/
 
 # Binary files
 psjungle
+
+# Claude Code files
+.claude/
+AGENTS.md
