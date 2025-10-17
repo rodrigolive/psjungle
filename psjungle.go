@@ -394,6 +394,29 @@ func adjustDepths(node *ProcessNode, depth int) {
 	}
 }
 
+// formatMemory formats memory usage in a human-readable way
+func formatMemory(memoryKB uint64) string {
+	if memoryKB < 1000 {
+		return fmt.Sprintf("%dKB", memoryKB)
+	} else if memoryKB < 1000000 {
+		// For MB, show at least 3 digits with up to 2 decimal places
+		mb := float64(memoryKB) / 1000.0
+		if mb < 10 {
+			return fmt.Sprintf("%.2fMB", mb)
+		} else {
+			return fmt.Sprintf("%.1fMB", mb)
+		}
+	} else {
+		// For GB, show at least 3 digits with up to 2 decimal places
+		gb := float64(memoryKB) / 1000000.0
+		if gb < 10 {
+			return fmt.Sprintf("%.2fGB", gb)
+		} else {
+			return fmt.Sprintf("%.1fGB", gb)
+		}
+	}
+}
+
 // printProcessTree prints the process tree with proper indentation and highlighting
 func printProcessTree(node *ProcessNode, targetPid int) error {
 	// Create indentation based on depth
@@ -437,12 +460,15 @@ func printProcessTree(node *ProcessNode, targetPid int) error {
 		rss = memInfo.RSS / 1024 // Convert to KB
 	}
 
+	// Format memory usage in human-readable way
+	memStr := formatMemory(rss)
+
 	// Print the process with highlighting if it's the target PID
 	// Format similar to ps aux: PID, CPU%, MEM%, COMMAND
 	if node.IsTarget {
-		fmt.Printf("%s\033[32m%d %.1f %d %s\033[0m\n", indent, pid, cpuPercent, rss, cmdline)
+		fmt.Printf("%s\033[32m%d %.1f %s %s\033[0m\n", indent, pid, cpuPercent, memStr, cmdline)
 	} else {
-		fmt.Printf("%s%d %.1f %d %s\n", indent, pid, cpuPercent, rss, cmdline)
+		fmt.Printf("%s%d %.1f %s %s\n", indent, pid, cpuPercent, memStr, cmdline)
 	}
 
 	// Print children
@@ -552,7 +578,7 @@ func main() {
 	app := &cli.App{
 		Name:  "psjungle",
 		Usage: "Display process trees for PIDs, ports, process names, or regex patterns",
-		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)",
+		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)\n\nOutput format: PID CPU% MemoryUsage CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
