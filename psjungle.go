@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,92 +10,17 @@ import (
 
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/urfave/cli/v2"
+
+	"psjungle/src"
 )
-
-func getPidsByPort(port string) ([]int, error) {
-	cmd := exec.Command("lsof", "-i", ":"+port, "-t")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get PIDs by port: %v", err)
-	}
-
-	var pids []int
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		pid, err := strconv.Atoi(scanner.Text())
-		if err == nil {
-			pids = append(pids, pid)
-		}
-	}
-
-	return pids, nil
-}
-
-func getPidsByName(name string) ([]int, error) {
-	cmd := exec.Command("pgrep", "-i", name)
-	output, err := cmd.Output()
-	if err != nil {
-		// If no processes found, pgrep returns exit code 1
-		if _, ok := err.(*exec.ExitError); ok {
-			return []int{}, nil
-		}
-		return nil, fmt.Errorf("failed to get PIDs by name: %v", err)
-	}
-
-	var pids []int
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		pid, err := strconv.Atoi(scanner.Text())
-		if err == nil {
-			pids = append(pids, pid)
-		}
-	}
-
-	return pids, nil
-}
-
-func getPidsByRegex(pattern string) ([]int, error) {
-	// Compile the regex pattern
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid regex pattern: %v", err)
-	}
-
-	// Get all processes with ps
-	cmd := exec.Command("ps", "aux")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get process list: %v", err)
-	}
-
-	var pids []int
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	// Skip the header line
-	scanner.Scan()
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if re.MatchString(line) {
-			fields := strings.Fields(line)
-			if len(fields) > 1 {
-				pid, err := strconv.Atoi(fields[1])
-				if err == nil {
-					pids = append(pids, pid)
-				}
-			}
-		}
-	}
-
-	return pids, nil
-}
 
 // ProcessNode represents a node in the process tree
 type ProcessNode struct {
-	Process   *process.Process
-	Children  []*ProcessNode
-	Depth     int
-	IsTarget  bool
-	Parent    *ProcessNode
+	Process  *process.Process
+	Children []*ProcessNode
+	Depth    int
+	IsTarget bool
+	Parent   *ProcessNode
 }
 
 // getAllProcesses returns a map of all processes indexed by PID
@@ -106,12 +29,12 @@ func getAllProcesses() (map[int32]*process.Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	procMap := make(map[int32]*process.Process)
 	for _, proc := range processes {
 		procMap[proc.Pid] = proc
 	}
-	
+
 	return procMap, nil
 }
 
@@ -122,7 +45,7 @@ func buildProcessTree(targetPid int, currentPid int32, depth int, procMap map[in
 		return nil
 	}
 	visited[currentPid] = true
-	
+
 	// Try to get process from procMap first, then directly
 	proc, exists := procMap[currentPid]
 	if !exists {
@@ -150,14 +73,14 @@ func buildProcessTree(targetPid int, currentPid int32, depth int, procMap map[in
 		if visited[p.Pid] {
 			continue
 		}
-		
+
 		// Get the parent PID of this process
 		ppid, err := p.Ppid()
 		if err != nil {
 			// Skip processes where we can't get the parent PID
 			continue
 		}
-		
+
 		// If the parent PID matches currentPid, this is a child
 		if ppid == currentPid {
 			childNode := buildProcessTree(targetPid, p.Pid, depth+1, procMap, visited)
@@ -170,8 +93,6 @@ func buildProcessTree(targetPid int, currentPid int32, depth int, procMap map[in
 
 	return node
 }
-
-
 
 // findParentChain finds the chain of parent processes for a target PID
 func findParentChain(targetPid int32, procMap map[int32]*process.Process) ([]int32, error) {
@@ -538,13 +459,13 @@ func findTargetNode(node *ProcessNode, targetPid int) *ProcessNode {
 	if int(node.Process.Pid) == targetPid {
 		return node
 	}
-	
+
 	for _, child := range node.Children {
 		if targetNode := findTargetNode(child, targetPid); targetNode != nil {
 			return targetNode
 		}
 	}
-	
+
 	return nil
 }
 
@@ -616,21 +537,25 @@ func runPstree(input string) error {
 		pids = []int{pid}
 	} else if strings.HasPrefix(input, ":") {
 		// Port matching
-		port := input[1:]
-		pids, err = getPidsByPort(port)
+		port := strings.TrimPrefix(input, ":")
+		portNum, convErr := strconv.Atoi(port)
+		if convErr != nil || portNum < 0 || portNum > 65535 {
+			return fmt.Errorf("invalid port '%s'", port)
+		}
+		pids, err = src.ByPort(uint32(portNum))
 		if err != nil {
 			return err
 		}
 	} else if strings.HasPrefix(input, "/") {
 		// Regex pattern matching
 		pattern := input[1:]
-		pids, err = getPidsByRegex(pattern)
+		pids, err = src.ByRegex(pattern)
 		if err != nil {
 			return err
 		}
 	} else {
 		// Process name matching
-		pids, err = getPidsByName(input)
+		pids, err = src.ByName(input)
 		if err != nil {
 			return err
 		}
@@ -680,8 +605,8 @@ func runPstree(input string) error {
 
 func main() {
 	app := &cli.App{
-		Name:  "psjungle",
-		Usage: "Display process trees for PIDs, ports, process names, or regex patterns",
+		Name:      "psjungle",
+		Usage:     "Display process trees for PIDs, ports, process names, or regex patterns",
 		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)\n\nOutput format: PID CPU% MemoryUsage CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB)",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
