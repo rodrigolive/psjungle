@@ -2,7 +2,7 @@
 logs/
 
 # Binary files
-psjungle
+/psjungle
 
 # Claude Code files
 .claude/

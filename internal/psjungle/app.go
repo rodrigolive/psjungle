@@ -1,4 +1,4 @@
-package main
+package psjungle
 
 import (
 	"fmt"
@@ -10,8 +10,6 @@ import (
 
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/urfave/cli/v2"
-
-	"psjungle/src"
 )
 
 // ProcessNode represents a node in the process tree
@@ -338,15 +336,8 @@ func formatMemory(memoryKB uint64) string {
 	}
 }
 
-// printProcessTree prints the process tree with proper indentation and highlighting
-func printProcessTree(node *ProcessNode, targetPid int) error {
-	// Print the current node with proper tree characters
-	printNodeWithTree(node, targetPid, []*ProcessNode{})
-	return nil
-}
-
-// buildTreePrefix creates a tree prefix with Unicode characters for visual representation
-func buildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
+// BuildTreePrefix creates a tree prefix with Unicode characters for visual representation
+func BuildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
 	if node.Depth == 0 {
 		return ""
 	}
@@ -371,21 +362,19 @@ func buildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
 				prefix.WriteString("└── ")
 			}
 		} else {
-			// These are ancestors further up the tree
-			// Check if they have more children after their current child branch
-			hasMoreChildren := false
-			ancestor := ancestors[i]
-			if ancestor.Parent != nil {
-				// Find this ancestor in its parent's children list and check if it's the last one
-				for j, child := range ancestor.Parent.Children {
-					if child == ancestor && j < len(ancestor.Parent.Children)-1 {
-						hasMoreChildren = true
+			// For intermediate ancestors, draw vertical line if there are more siblings
+			hasSiblings := false
+			if i+1 < len(ancestors) {
+				parent := ancestors[i]
+				child := ancestors[i+1]
+				for _, c := range parent.Children {
+					if c == child {
 						break
 					}
+					hasSiblings = true
 				}
 			}
-
-			if hasMoreChildren {
+			if hasSiblings {
 				prefix.WriteString("│   ")
 			} else {
 				prefix.WriteString("    ")
@@ -396,39 +385,23 @@ func buildTreePrefix(node *ProcessNode, nextSiblings []*ProcessNode) string {
 	return prefix.String()
 }
 
-// printNodeWithTree recursively prints nodes with Unicode tree characters
-func printNodeWithTree(node *ProcessNode, targetPid int, siblings []*ProcessNode) {
-	// Create the tree prefix based on the node's position in the tree
-	prefix := buildTreePrefix(node, siblings)
+// printNodeWithTree prints the process tree nodes with proper indentation
+func printNodeWithTree(node *ProcessNode, targetPid int, nextSiblings []*ProcessNode) {
+	prefix := BuildTreePrefix(node, nextSiblings)
 
-	// Get process details
-	pid := int(node.Process.Pid)
-
-	// Get command line
-	cmdline, err := node.Process.Cmdline()
-	if err != nil || cmdline == "" {
-		// If cmdline is empty or errored, fall back to the process name
-		name, err := node.Process.Name()
-		if err != nil || name == "" {
-			cmdline = "[unknown]"
-		} else {
-			cmdline = name
-		}
-	}
-
-	// Get CPU percent
-	cpuPercent, err := node.Process.CPUPercent()
-	if err != nil {
-		cpuPercent = 0.0
-	}
-
-	// Get memory info
-	memInfo, err := node.Process.MemoryInfo()
+	// Get process info
+	pid := node.Process.Pid
+	name, _ := node.Process.Name()
+	cmdline, _ := node.Process.Cmdline()
+	cpuPercent, _ := node.Process.CPUPercent()
+	memInfo, _ := node.Process.MemoryInfo()
 	var rss uint64
-	if err != nil {
-		rss = 0
-	} else {
+	if memInfo != nil {
 		rss = memInfo.RSS / 1024 // Convert to KB
+	}
+
+	if cmdline == "" {
+		cmdline = name
 	}
 
 	// Format memory usage in human-readable way
@@ -446,11 +419,11 @@ func printNodeWithTree(node *ProcessNode, targetPid int, siblings []*ProcessNode
 	for i, child := range node.Children {
 		// Create a slice of siblings for this child (all children of the same parent)
 		// Mark which siblings come after this child
-		var nextSiblings []*ProcessNode
+		var siblings []*ProcessNode
 		for j := i + 1; j < len(node.Children); j++ {
-			nextSiblings = append(nextSiblings, node.Children[j])
+			siblings = append(siblings, node.Children[j])
 		}
-		printNodeWithTree(child, targetPid, nextSiblings)
+		printNodeWithTree(child, targetPid, siblings)
 	}
 }
 
@@ -490,7 +463,8 @@ func pstreeBoth(targetPid int) error {
 	}
 
 	// Print the entire tree (it's already focused)
-	return printProcessTree(tree, targetPid)
+	printNodeWithTree(tree, targetPid, []*ProcessNode{})
+	return nil
 }
 
 // collectProcessTreePids recursively collects all PIDs in a process tree
@@ -524,6 +498,7 @@ func getProcessTreePids(targetPid int) []int {
 	return collectProcessTreePids(tree)
 }
 
+// runPstree dispatches based on user input and prints matching trees.
 func runPstree(input string) error {
 	var pids []int
 	var err error
@@ -542,20 +517,20 @@ func runPstree(input string) error {
 		if convErr != nil || portNum < 0 || portNum > 65535 {
 			return fmt.Errorf("invalid port '%s'", port)
 		}
-		pids, err = src.ByPort(uint32(portNum))
+		pids, err = ByPort(uint32(portNum))
 		if err != nil {
 			return err
 		}
 	} else if strings.HasPrefix(input, "/") {
 		// Regex pattern matching
 		pattern := input[1:]
-		pids, err = src.ByRegex(pattern)
+		pids, err = ByRegex(pattern)
 		if err != nil {
 			return err
 		}
 	} else {
 		// Process name matching
-		pids, err = src.ByName(input)
+		pids, err = ByName(input)
 		if err != nil {
 			return err
 		}
@@ -603,7 +578,8 @@ func runPstree(input string) error {
 	return nil
 }
 
-func main() {
+// NewApp builds the CLI application configuration.
+func NewApp() *cli.App {
 	app := &cli.App{
 		Name:      "psjungle",
 		Usage:     "Display process trees for PIDs, ports, process names, or regex patterns",
@@ -652,19 +628,21 @@ func main() {
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
 				}
-			} else {
-				// Normal mode
-				if err := runPstree(input); err != nil {
-					return cli.Exit(err.Error(), 1)
-				}
+			}
+
+			// Normal mode
+			if err := runPstree(input); err != nil {
+				return cli.Exit(err.Error(), 1)
 			}
 
 			return nil
 		},
 	}
 
-	if err := app.Run(os.Args); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
+	return app
+}
+
+// Run executes the CLI application with provided args.
+func Run(args []string) error {
+	return NewApp().Run(args)
 }
