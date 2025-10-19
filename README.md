@@ -84,6 +84,7 @@ Memory is displayed in human-readable units (KB/MB/GB). Target processes are hig
 
 - `cmd/psjungle`: CLI entrypoint.
 - `internal/psjungle`: Core tree-building and process lookup logic.
+- `scripts`: Build and release scripts.
 
 ## Testing
 
@@ -94,3 +95,12 @@ go test ./...
 Because the code interacts with the local process table, a few tests skip
 automatically if the necessary process information is unavailable (for example,
 when PID 1 cannot be inspected).
+
+## CI/CD
+
+This project uses GitHub Actions for continuous integration and release management:
+
+- `.github/workflows/build.yml` - Runs tests and builds on push to main branch and pull requests
+- `.github/workflows/release.yml` - Creates releases with binary archives when tags are pushed
+
+To create a new release, push a tag with semantic versioning (e.g., `git tag v1.2 && git push origin v1.2`).
