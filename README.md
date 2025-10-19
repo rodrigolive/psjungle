@@ -5,7 +5,7 @@
                             ********
                            **  ******
                             *   ******     ******
-   PSJUNGLE  V1.0               ******   *********
+   PSJUNGLE  V1.1               ******   *********
                                  ****  *****   ***
                                  ***  ***     **
                            *************       *
@@ -38,6 +38,7 @@ No shell-outs, no calls to `lsof`, `pgrep`, or others. Just pure Go via
 - Full command line output (similar to `ps auxww`) with live CPU% and human-readable memory usage (KB/MB/GB).
 - Highlights the target process in green.
 - Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
+- Support for multiple PIDs as arguments, intelligently showing separate trees only when needed.
 - Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
 ## Installation
@@ -57,7 +58,7 @@ go build ./cmd/psjungle
 ## Usage
 
 ```bash
-psjungle [options] [PID|:port|name|/pattern]
+psjungle [options] [PID|:port|name|/pattern]...
 ```
 
 Examples:
@@ -67,6 +68,7 @@ psjungle 1234                # Inspect the tree for PID 1234
 psjungle :8080               # Show trees for processes bound to port 8080
 psjungle node                # Match processes whose name contains "node" (case-insensitive)
 psjungle "/node.*8080"        # Regex match against command line / name
+psjungle 1234 5678           # Display process trees for multiple PIDs (intelligently shows separate trees only when needed)
 psjungle -w 1234             # Refresh every 2 seconds (default) while showing PID 1234
 psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
 psjungle -w2 1234            # Refresh every 2 seconds while showing PID 1234 (alternative format)
