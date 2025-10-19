@@ -69,9 +69,23 @@ psjungle :8080               # Show trees for processes bound to port 8080
 psjungle node                # Match processes whose name contains "node" (case-insensitive)
 psjungle "/node.*8080"        # Regex match against command line / name
 psjungle 1234 5678           # Display process trees for multiple PIDs (intelligently shows separate trees only when needed)
+psjungle 1234 5678 9012      # Display process trees for three PIDs
 psjungle -w 1234             # Refresh every 2 seconds (default) while showing PID 1234
 psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
 psjungle -w2 1234            # Refresh every 2 seconds while showing PID 1234 (alternative format)
+```
+
+Multiple PID Examples:
+When providing multiple PIDs, psjungle intelligently shows separate process trees only when needed (when PIDs are not in the same process tree).
+
+For example, to monitor multiple specific processes:
+```bash
+psjungle 1 1234 4321         # Show trees for root process and two other specific PIDs
+```
+
+To monitor all processes matching a specific name:
+```bash
+psjungle node                # This will automatically show trees for all processes with "node" in their name
 ```
 
 ## Output Format
