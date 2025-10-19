@@ -21,7 +21,12 @@
                                 H-___-H
 ```
 
-psjungle is a process tree visualization tool that combines the functionality of `ps`, `pgrep`, `lsof`, and `pstree` into a single command with live CPU and memory monitoring.
+`psjungle` is a process tree visualization tool that combines the functionality
+of `ps`, `pgrep`, `lsof`, and `pstree` into a single command with live CPU and
+memory monitoring.
+
+It lists the tree always starting from PID=1, so that you see your process in
+context.
 
 ## Features
 
