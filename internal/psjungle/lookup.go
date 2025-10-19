@@ -12,7 +12,7 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-// ByName returns PIDs whose process name contains the provided term (case-insensitive).
+// ByName returns PIDs whose process name or command line contains the provided term (case-insensitive).
 func ByName(name string) ([]int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -33,12 +33,28 @@ func ByName(name string) ([]int, error) {
 		default:
 		}
 
+		// Check process name first
 		displayName, err := proc.NameWithContext(ctx)
 		if err != nil || displayName == "" {
 			continue
 		}
 
 		if strings.Contains(strings.ToLower(displayName), target) {
+			pid := proc.Pid
+			if _, ok := seen[pid]; !ok {
+				seen[pid] = struct{}{}
+				matches = append(matches, int(pid))
+			}
+			continue // If we found a match in the name, we don't need to check cmdline
+		}
+
+		// If no match in name, check command line
+		cmdline, err := proc.CmdlineWithContext(ctx)
+		if err != nil || cmdline == "" {
+			continue
+		}
+
+		if strings.Contains(strings.ToLower(cmdline), target) {
 			pid := proc.Pid
 			if _, ok := seen[pid]; !ok {
 				seen[pid] = struct{}{}
