@@ -693,24 +693,31 @@ func NewApp() *cli.App {
 					}
 				}
 
-				// Get the target from the next argument if available
-				var target string
-				if c.NArg() >= 1 {
-					// If we have at least one argument, the first one is the target
-					target = c.Args().Get(0)
-				} else {
+				// Get all targets from the remaining arguments
+				if c.NArg() < 1 {
 					// No target provided
 					cli.ShowAppHelp(c)
-					return cli.Exit("Watch mode requires a target PID/port/name", 1)
+					return cli.Exit("Watch mode requires at least one target PID/port/name", 1)
+				}
+
+				// Get all inputs (all non-flag arguments)
+				inputs := make([]string, c.NArg())
+				for i := 0; i < c.NArg(); i++ {
+					inputs[i] = c.Args().Get(i)
 				}
 
 				// Watch mode
 				for {
 					// Clear screen
 					fmt.Print("\033[H\033[2J")
-					// Print status line
-					fmt.Printf("Every %.1fs: psjungle -w%s %s\n\n", float64(watchInterval), watchValue, target)
-					if err := runPstree([]string{target}, flatMode); err != nil {
+					// Print status line with all targets
+					fmt.Printf("Every %.1fs: psjungle -w%s", float64(watchInterval), watchValue)
+					for _, input := range inputs {
+						fmt.Printf(" %s", input)
+					}
+					fmt.Println()
+					fmt.Println()
+					if err := runPstree(inputs, flatMode); err != nil {
 						return cli.Exit(err.Error(), 1)
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
