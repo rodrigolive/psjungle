@@ -483,6 +483,24 @@ func collectProcessTreePids(node *ProcessNode) []int {
 	return pids
 }
 
+// getDirectChildrenPids recursively gets direct children PIDs for a process
+func getDirectChildrenPids(parentPid int32, procMap map[int32]*process.Process) []int {
+	var children []int
+	for _, proc := range procMap {
+		ppid, err := proc.Ppid()
+		if err != nil {
+			continue
+		}
+		if ppid == parentPid {
+			children = append(children, int(proc.Pid))
+			// Recursively get grandchildren
+		 grandchildren := getDirectChildrenPids(proc.Pid, procMap)
+		 children = append(children, grandchildren...)
+		}
+	}
+	return children
+}
+
 // getProcessTreePids builds a tree for the target PID and returns all PIDs in that tree
 func getProcessTreePids(targetPid int) []int {
 	// Get all processes
@@ -491,90 +509,148 @@ func getProcessTreePids(targetPid int) []int {
 		return []int{targetPid}
 	}
 
-	// Build the focused tree
-	tree := buildFocusedTree(targetPid, procMap)
-	if tree == nil {
-		return []int{targetPid}
+	// Create a focused set of PIDs that are more relevant for comparison
+	// Include the target process, its parent, and all its descendants
+	pids := []int{targetPid}
+
+	// Get the target process
+	targetProc, exists := procMap[int32(targetPid)]
+	if !exists {
+		// Try to get target process directly
+		p, err := process.NewProcess(int32(targetPid))
+		if err != nil {
+			return []int{targetPid}
+		}
+		targetProc = p
 	}
 
-	// Collect all PIDs in the tree
-	return collectProcessTreePids(tree)
+	// Get parent PID
+	ppid, err := targetProc.Ppid()
+	if err == nil {
+		pids = append(pids, int(ppid))
+	}
+
+	// Get all direct children and descendants
+	children := getDirectChildrenPids(int32(targetPid), procMap)
+	pids = append(pids, children...)
+
+	return pids
 }
 
 // runPstree dispatches based on user input and prints matching trees.
-func runPstree(input string, flatMode bool) error {
-	var pids []int
+// When multiple inputs are provided, they are all treated as PIDs.
+func runPstree(inputs []string, flatMode bool) error {
+	var allPids []int
 	var err error
 
-	// Check if input is a PID (only numbers)
-	if regexp.MustCompile(`^\d+$`).MatchString(input) {
-		pid, convErr := strconv.Atoi(input)
-		if convErr != nil {
-			return fmt.Errorf("invalid PID '%s'", input)
+	// If we have multiple inputs, treat them all as PIDs
+	if len(inputs) > 1 {
+		for _, input := range inputs {
+			// Check if input is a PID (only numbers)
+			if regexp.MustCompile(`^\d+$`).MatchString(input) {
+				pid, convErr := strconv.Atoi(input)
+				if convErr != nil {
+					return fmt.Errorf("invalid PID '%s'", input)
+				}
+				allPids = append(allPids, pid)
+			} else {
+				// For non-numeric inputs when we have multiple arguments,
+				// we could extend this but for now we'll treat them as invalid
+				return fmt.Errorf("invalid PID '%s'", input)
+			}
 		}
-		pids = []int{pid}
-	} else if strings.HasPrefix(input, ":") {
-		// Port matching
-		port := strings.TrimPrefix(input, ":")
-		portNum, convErr := strconv.Atoi(port)
-		if convErr != nil || portNum < 0 || portNum > 65535 {
-			return fmt.Errorf("invalid port '%s'", port)
+	} else if len(inputs) == 1 {
+		// Single input - use existing logic
+		input := inputs[0]
+		var pids []int
+
+		// Check if input is a PID (only numbers)
+		if regexp.MustCompile(`^\d+$`).MatchString(input) {
+			pid, convErr := strconv.Atoi(input)
+			if convErr != nil {
+				return fmt.Errorf("invalid PID '%s'", input)
+			}
+			pids = []int{pid}
+		} else if strings.HasPrefix(input, ":") {
+			// Port matching
+			port := strings.TrimPrefix(input, ":")
+			portNum, convErr := strconv.Atoi(port)
+			if convErr != nil || portNum < 0 || portNum > 65535 {
+				return fmt.Errorf("invalid port '%s'", port)
+			}
+			pids, err = ByPort(uint32(portNum))
+			if err != nil {
+				return err
+			}
+		} else if strings.HasPrefix(input, "/") {
+			// Regex pattern matching
+			pattern := input[1:]
+			pids, err = ByRegex(pattern)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Process name matching
+			pids, err = ByName(input)
+			if err != nil {
+				return err
+			}
 		}
-		pids, err = ByPort(uint32(portNum))
-		if err != nil {
-			return err
-		}
-	} else if strings.HasPrefix(input, "/") {
-		// Regex pattern matching
-		pattern := input[1:]
-		pids, err = ByRegex(pattern)
-		if err != nil {
-			return err
-		}
+
+		allPids = pids
 	} else {
-		// Process name matching
-		pids, err = ByName(input)
-		if err != nil {
-			return err
-		}
+		return fmt.Errorf("no input provided")
 	}
 
-	if len(pids) == 0 {
+	if len(allPids) == 0 {
 		fmt.Println("No processes found")
 		os.Exit(1)
 	}
 
-	// For port matching, we want to avoid showing duplicate trees
+	// For multiple PIDs, we want to avoid showing duplicate trees
 	// Keep track of processes already shown in a tree
-	var shownPids map[int]bool
-	if strings.HasPrefix(input, ":") {
-		shownPids = make(map[int]bool)
-	}
+	shownPids := make(map[int]bool)
 
-	// Display process trees for all matching PIDs
-	for _, pid := range pids {
-		// Skip if this process is already part of a previously displayed tree (for port matching)
-		if strings.HasPrefix(input, ":") && shownPids[pid] {
+	// Display process trees for all PIDs, but avoid duplicates
+	firstTree := true
+	for _, pid := range allPids {
+		// Skip if process doesn't exist
+		_, err := process.NewProcess(int32(pid))
+		if err != nil {
+			fmt.Printf("Process %d not found\n", pid)
 			continue
 		}
 
-		if len(pids) > 1 {
-			fmt.Printf("Process tree for PID %d:\n", pid)
-		}
-		if err := pstreeBoth(pid, flatMode); err != nil {
-			fmt.Printf("Error for PID %d: %v\n", pid, err)
-		}
+		// Get all PIDs in this process's tree
+		treePids := getProcessTreePids(pid)
 
-		// For port matching, mark all processes in this tree as shown
-		if strings.HasPrefix(input, ":") {
-			treePids := getProcessTreePids(pid)
-			for _, treePid := range treePids {
-				shownPids[treePid] = true
+		// Check if any PID in this tree has already been shown
+		alreadyShown := false
+		for _, treePid := range treePids {
+			if shownPids[treePid] {
+				alreadyShown = true
+				break
 			}
 		}
 
-		if len(pids) > 1 {
-			fmt.Println()
+		// If this tree hasn't been shown yet, display it
+		if !alreadyShown {
+			if !firstTree {
+				fmt.Println()
+			}
+			if len(allPids) > 1 {
+				fmt.Printf("Process tree for PID %d:\n", pid)
+			}
+			if err := pstreeBoth(pid, flatMode); err != nil {
+				fmt.Printf("Error for PID %d: %v\n", pid, err)
+			}
+
+			// Mark all processes in this tree as shown
+			for _, treePid := range treePids {
+				shownPids[treePid] = true
+			}
+
+			firstTree = false
 		}
 	}
 
@@ -586,19 +662,19 @@ func NewApp() *cli.App {
 	app := &cli.App{
 		Name:      "psjungle",
 		Usage:     "Display process trees for PIDs, ports, process names, or regex patterns",
-		UsageText: "psjungle [options] [PID|:port|name|/pattern]\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 1234          Watch process tree for PID 1234 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n\nOutput format: PID CPU% MemoryUsage CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB)",
+		UsageText: "psjungle [options] [PID|:port|name|/pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
 				Aliases: []string{"w"},
 				Value:   "",
-				Usage:   "Watch mode with refresh interval (use -w=2, -w2, or -w 2 for 2 seconds refresh, then provide PID/port/name)",
+				Usage:   "Watch mode with refresh interval. Use formats like -w=2, -w2, or -w 2 for 2 seconds refresh. Provide a PID/port/name to watch (only watches the first target when multiple targets are specified).",
 			},
 			&cli.BoolFlag{
 				Name:    "flat",
 				Aliases: []string{"f"},
 				Value:   false,
-				Usage:   "Flat mode - removes unicode indentation and lists everything left aligned",
+				Usage:   "Flat mode - removes Unicode tree indentation and lists processes left-aligned",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -634,7 +710,7 @@ func NewApp() *cli.App {
 					fmt.Print("\033[H\033[2J")
 					// Print status line
 					fmt.Printf("Every %.1fs: psjungle -w%s %s\n\n", float64(watchInterval), watchValue, target)
-					if err := runPstree(target, flatMode); err != nil {
+					if err := runPstree([]string{target}, flatMode); err != nil {
 						return cli.Exit(err.Error(), 1)
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
@@ -647,11 +723,14 @@ func NewApp() *cli.App {
 				return cli.Exit("", 1)
 			}
 
-			// Get the input (first non-flag argument)
-			input := c.Args().Get(0)
+			// Get all inputs (all non-flag arguments)
+			inputs := make([]string, c.NArg())
+			for i := 0; i < c.NArg(); i++ {
+				inputs[i] = c.Args().Get(i)
+			}
 
-			// Normal mode
-			if err := runPstree(input, flatMode); err != nil {
+			// Normal mode - handle multiple PIDs
+			if err := runPstree(inputs, flatMode); err != nil {
 				return cli.Exit(err.Error(), 1)
 			}
 
