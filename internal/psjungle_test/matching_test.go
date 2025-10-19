@@ -8,11 +8,11 @@ import (
 	"psjungle/internal/psjungle"
 )
 
-func TestByNameCommandlineMatching(t *testing.T) {
-	// Test that ByName matches on both process name and command line
+func TestByRegexMatching(t *testing.T) {
+	// Test that ByRegex matches on both process name and command line
 
-	// Look for "bash" processes which should be found via process name
-	bashPids, err := psjungle.ByName("bash")
+	// Look for "bash" processes with regex matching
+	bashPids, err := psjungle.ByRegex("bash", false)
 	if err != nil {
 		t.Fatalf("Error finding bash processes: %v", err)
 	}
@@ -23,9 +23,9 @@ func TestByNameCommandlineMatching(t *testing.T) {
 	}
 
 	// Test that we don't find non-existent processes
-	foobazPids, err := psjungle.ByName("foobaz")
+	foobazPids, err := psjungle.ByRegex("foobaz", false)
 	if err != nil {
-		t.Fatalf("Error in ByName for non-existent process: %v", err)
+		t.Fatalf("Error in ByRegex for non-existent process: %v", err)
 	}
 
 	if len(foobazPids) != 0 {
@@ -33,7 +33,7 @@ func TestByNameCommandlineMatching(t *testing.T) {
 	}
 }
 
-func TestByNameMatchesCommandLine(t *testing.T) {
+func TestByRegexMatchesCommandLine(t *testing.T) {
 	// Start a test process with a unique command line that we can search for
 	// We'll use a command that includes a unique identifier in its command line
 	uniqueID := "psjungle_test_12345"
@@ -50,7 +50,7 @@ func TestByNameMatchesCommandLine(t *testing.T) {
 
 	// Now search for processes that contain our unique ID
 	// This should find our test process via command line matching
-	pids, err := psjungle.ByName(uniqueID)
+	pids, err := psjungle.ByRegex(uniqueID, false)
 	if err != nil {
 		t.Fatalf("Error finding processes by command line: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestRegexMatching(t *testing.T) {
 	// Test that ByRegex works with command line patterns
 
 	// Look for processes with bash in their command line
-	bashPids, err := psjungle.ByRegex("bash")
+	bashPids, err := psjungle.ByRegex("bash", false)
 	if err != nil {
 		t.Fatalf("Error finding bash processes with regex: %v", err)
 	}

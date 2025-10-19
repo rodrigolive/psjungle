@@ -539,7 +539,7 @@ func getProcessTreePids(targetPid int) []int {
 
 // runPstree dispatches based on user input and prints matching trees.
 // When multiple inputs are provided, they are all treated as PIDs.
-func runPstree(inputs []string, flatMode bool) error {
+func runPstree(inputs []string, flatMode bool, strictMode bool) error {
 	var allPids []int
 	var err error
 
@@ -582,16 +582,9 @@ func runPstree(inputs []string, flatMode bool) error {
 			if err != nil {
 				return err
 			}
-		} else if strings.HasPrefix(input, "/") {
-			// Regex pattern matching
-			pattern := input[1:]
-			pids, err = ByRegex(pattern)
-			if err != nil {
-				return err
-			}
 		} else {
-			// Process name matching
-			pids, err = ByName(input)
+			// Regex or strict string matching
+			pids, err = ByRegex(input, strictMode)
 			if err != nil {
 				return err
 			}
@@ -661,8 +654,8 @@ func runPstree(inputs []string, flatMode bool) error {
 func NewApp() *cli.App {
 	app := &cli.App{
 		Name:      "psjungle",
-		Usage:     "Display process trees for PIDs, ports, process names, or regex patterns",
-		UsageText: "psjungle [options] [PID|:port|name|/pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes with \"node\" in their name\n   psjungle \"/node.*8080\"       Display process trees for processes matching regex pattern\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle 1234 5678 9012     Display process trees for three PIDs\n   psjungle 1 1234 4321        Display process trees for root process and two other PIDs\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
+		Usage:     "Display process trees for PIDs, ports, or patterns (regex by default, strict string with -s flag)",
+		UsageText: "psjungle [options] [PID|:port|pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle node               Display process trees for processes matching \"node\" (regex pattern)\n   psjungle \"node.*8080\"        Display process trees for processes matching regex pattern\n   psjungle -s \"node.*8080\"    Display process trees for processes with exact string \"node.*8080\" in name or command line\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle 1234 5678 9012     Display process trees for three PIDs\n   psjungle 1 1234 4321        Display process trees for root process and two other PIDs\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -s -w2 starman     Watch process trees for processes with \"starman\" in name or command line\n\nBy default, patterns are treated as regex. Use the -s/--strict flag to match exact strings.\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
@@ -676,10 +669,17 @@ func NewApp() *cli.App {
 				Value:   false,
 				Usage:   "Flat mode - removes Unicode tree indentation and lists processes left-aligned",
 			},
+			&cli.BoolFlag{
+				Name:    "strict",
+				Aliases: []string{"s"},
+				Value:   false,
+				Usage:   "Strict mode - treats input as exact string to match, not as regex pattern",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			watchValue := c.String("watch")
 			flatMode := c.Bool("flat")
+			strictMode := c.Bool("strict")
 
 			// Check if watch flag was explicitly set
 			if c.IsSet("watch") {
@@ -712,12 +712,15 @@ func NewApp() *cli.App {
 					fmt.Print("\033[H\033[2J")
 					// Print status line with all targets
 					fmt.Printf("Every %.1fs: psjungle -w%s", float64(watchInterval), watchValue)
+					if strictMode {
+						fmt.Print(" -s")
+					}
 					for _, input := range inputs {
 						fmt.Printf(" %s", input)
 					}
 					fmt.Println()
 					fmt.Println()
-					if err := runPstree(inputs, flatMode); err != nil {
+					if err := runPstree(inputs, flatMode, strictMode); err != nil {
 						return cli.Exit(err.Error(), 1)
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
@@ -737,7 +740,7 @@ func NewApp() *cli.App {
 			}
 
 			// Normal mode - handle multiple PIDs
-			if err := runPstree(inputs, flatMode); err != nil {
+			if err := runPstree(inputs, flatMode, strictMode); err != nil {
 				return cli.Exit(err.Error(), 1)
 			}
 

@@ -12,66 +12,18 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-// ByName returns PIDs whose process name or command line contains the provided term (case-insensitive).
-func ByName(name string) ([]int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
-	procs, err := process.ProcessesWithContext(ctx)
-	if err != nil {
-		return nil, err
-	}
+// ByRegex returns PIDs whose command line or name matches the provided pattern.
+// If strict is true, performs exact substring matching. Otherwise, treats pattern as regex.
+func ByRegex(pattern string, strict bool) ([]int, error) {
+	var re *regexp.Regexp
+	var err error
 
-	target := strings.ToLower(name)
-	seen := make(map[int32]struct{})
-	var matches []int
-
-	for _, proc := range procs {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+	if !strict {
+		re, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil, err
 		}
-
-		// Check process name first
-		displayName, err := proc.NameWithContext(ctx)
-		if err != nil || displayName == "" {
-			continue
-		}
-
-		if strings.Contains(strings.ToLower(displayName), target) {
-			pid := proc.Pid
-			if _, ok := seen[pid]; !ok {
-				seen[pid] = struct{}{}
-				matches = append(matches, int(pid))
-			}
-			continue // If we found a match in the name, we don't need to check cmdline
-		}
-
-		// If no match in name, check command line
-		cmdline, err := proc.CmdlineWithContext(ctx)
-		if err != nil || cmdline == "" {
-			continue
-		}
-
-		if strings.Contains(strings.ToLower(cmdline), target) {
-			pid := proc.Pid
-			if _, ok := seen[pid]; !ok {
-				seen[pid] = struct{}{}
-				matches = append(matches, int(pid))
-			}
-		}
-	}
-
-	sort.Ints(matches)
-	return matches, nil
-}
-
-// ByRegex returns PIDs whose command line matches the provided regex pattern.
-func ByRegex(pattern string) ([]int, error) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -85,6 +37,7 @@ func ByRegex(pattern string) ([]int, error) {
 	seen := make(map[int32]struct{})
 	var matches []int
 	currentPid := int32(os.Getpid())
+	target := strings.ToLower(pattern)
 
 	for _, proc := range procs {
 		select {
@@ -98,21 +51,43 @@ func ByRegex(pattern string) ([]int, error) {
 			continue
 		}
 
-		cmdline, err := proc.CmdlineWithContext(ctx)
-		if err != nil || cmdline == "" {
-			// Fallback to process name if full command line unavailable
-			name, nameErr := proc.NameWithContext(ctx)
-			if nameErr != nil || name == "" {
-				continue
+		if strict {
+			// Strict matching - exact substring match in either cmdline or name
+			cmdline, err := proc.CmdlineWithContext(ctx)
+			if err != nil || cmdline == "" {
+				// Fallback to process name if full command line unavailable
+				name, nameErr := proc.NameWithContext(ctx)
+				if nameErr != nil || name == "" {
+					continue
+				}
+				if !strings.Contains(strings.ToLower(name), target) {
+					continue
+				}
+			} else if !strings.Contains(strings.ToLower(cmdline), target) {
+				// Try matching against process name when command line does not match
+				name, nameErr := proc.NameWithContext(ctx)
+				if nameErr != nil || name == "" || !strings.Contains(strings.ToLower(name), target) {
+					continue
+				}
 			}
-			if !re.MatchString(name) {
-				continue
-			}
-		} else if !re.MatchString(cmdline) {
-			// Try matching against process name when command line does not match
-			name, nameErr := proc.NameWithContext(ctx)
-			if nameErr != nil || name == "" || !re.MatchString(name) {
-				continue
+		} else {
+			// Regex matching
+			cmdline, err := proc.CmdlineWithContext(ctx)
+			if err != nil || cmdline == "" {
+				// Fallback to process name if full command line unavailable
+				name, nameErr := proc.NameWithContext(ctx)
+				if nameErr != nil || name == "" {
+					continue
+				}
+				if !re.MatchString(name) {
+					continue
+				}
+			} else if !re.MatchString(cmdline) {
+				// Try matching against process name when command line does not match
+				name, nameErr := proc.NameWithContext(ctx)
+				if nameErr != nil || name == "" || !re.MatchString(name) {
+					continue
+				}
 			}
 		}
 
