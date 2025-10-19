@@ -21,6 +21,19 @@
                                 H-___-H
 ```
 
+psjungle is a process tree visualization tool that combines the functionality of `ps`, `pgrep`, `lsof`, and `pstree` into a single command with live CPU and memory monitoring.
+
+## Features
+
+- Display focused process trees by PID, TCP/UDP port (`:8080`), case-insensitive name fragment (`node`), or full regex (`/node.*8080`).
+- Full command line output (similar to `ps auxww`) with live CPU% and human-readable memory usage (KB/MB/GB).
+- Highlights the target process in green.
+- Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
+- Support for multiple PIDs as arguments, intelligently showing separate trees only when needed.
+- Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
+
+## Why?
+
 I built psjungle because I got fed up with juggling five different commands
 every time a process on my laptop started misbehaving. On macOS I would bounce
 between `ps`, `pgrep`, `lsof`, `pstree`, Activity Monitor...
@@ -31,15 +44,6 @@ TCP/UDP port (`:8080`), name fragment (`node`), or full regex (`/node.*8080`).
 
 No shell-outs, no calls to `lsof`, `pgrep`, or others. Just pure Go via
 `gopsutil` for consistent cross-platform behavior.
-
-## Features
-
-- Display focused process trees by PID, TCP/UDP port (`:8080`), case-insensitive name fragment (`node`), or full regex (`/node.*8080`).
-- Full command line output (similar to `ps auxww`) with live CPU% and human-readable memory usage (KB/MB/GB).
-- Highlights the target process in green.
-- Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
-- Support for multiple PIDs as arguments, intelligently showing separate trees only when needed.
-- Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
 ## Installation
 
