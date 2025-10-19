@@ -30,11 +30,12 @@ context.
 
 ## Features
 
-- Display focused process trees by PID, TCP/UDP port (`:8080`), case-insensitive name fragment (`node`), or full regex (`/node.*8080`).
+- Display focused process trees by PID, TCP/UDP port (`:8080`), name fragment (`node`), or regex pattern (`node.*8080`).
 - Full command line output (similar to `ps auxww`) with live CPU% and human-readable memory usage (KB/MB/GB).
 - Highlights the target process in green.
 - Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
 - Support for multiple PIDs as arguments, intelligently showing separate trees only when needed.
+- Strict mode (`-s` / `--strict`) for exact string matching instead of regex patterns.
 - Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
 ## Why?
@@ -45,7 +46,12 @@ between `ps`, `pgrep`, `lsof`, `pstree`, Activity Monitor...
 
 `psjungle` scratches that itch. It provides a `pstree`-like view, but adds live
 CPU%, human-readable memory (KB/MB/GB), and robust filtering: by PID (`1234`),
-TCP/UDP port (`:8080`), name fragment (`node`), or full regex (`/node.*8080`).
+TCP/UDP port (`:8080`), name fragment (`node`), or full regex (`node.*8080`).
+
+With the addition of strict mode, you can now match exact strings in process
+names and command lines without worrying about regex interpretation. This is
+particularly helpful for processes like starman that appear as "perl" in process
+names but contain specific strings in their command lines.
 
 No shell-outs, no calls to `lsof`, `pgrep`, or others. Just pure Go via
 `gopsutil` for consistent cross-platform behavior.
@@ -67,21 +73,23 @@ go build ./cmd/psjungle
 ## Usage
 
 ```bash
-psjungle [options] [PID|:port|name|/pattern]...
+psjungle [options] [PID|:port|pattern]...
 ```
 
 Examples:
 
 ```bash
-psjungle 1234                # Inspect the tree for PID 1234
-psjungle :8080               # Show trees for processes bound to port 8080
-psjungle node                # Match processes whose name contains "node" (case-insensitive)
-psjungle "/node.*8080"        # Regex match against command line / name
-psjungle 1234 5678           # Display process trees for multiple PIDs (intelligently shows separate trees only when needed)
-psjungle 1234 5678 9012      # Display process trees for three PIDs
-psjungle -w 1234             # Refresh every 2 seconds (default) while showing PID 1234
-psjungle -w=5 :3000          # Refresh every 5 seconds for port 3000 listeners
-psjungle -w2 1234            # Refresh every 2 seconds while showing PID 1234 (alternative format)
+psjungle 1234                     # Inspect the tree for PID 1234
+psjungle :8080                    # Show trees for processes bound to port 8080
+psjungle node                     # Regex match processes whose name contains "node"
+psjungle "node.*8080"             # Regex match against command line / name
+psjungle -s "node.*8080"          # Strict match for processes with exact string "node.*8080"
+psjungle 1234 5678                # Display process trees for multiple PIDs (intelligently shows separate trees only when needed)
+psjungle 1234 5678 9012           # Display process trees for three PIDs
+psjungle -w 1234                  # Refresh every 2 seconds (default) while showing PID 1234
+psjungle -w=5 :3000               # Refresh every 5 seconds for port 3000 listeners
+psjungle -w2 1234                 # Refresh every 2 seconds while showing PID 1234 (alternative format)
+psjungle -s -w2 starman           # Watch mode with strict matching for "starman"
 ```
 
 Multiple PID Examples:
@@ -96,6 +104,19 @@ To monitor all processes matching a specific name:
 ```bash
 psjungle node                # This will automatically show trees for all processes with "node" in their name
 ```
+
+## Strict Mode Examples
+
+The `-s` or `--strict` flag enables exact string matching instead of regex patterns. Note that the previous "/" prefix syntax for regex patterns has been removed - all patterns are now treated as regex by default unless the `-s` flag is used:
+
+```bash
+psjungle -s "starman"        # Find processes containing the exact string "starman" (useful for starman processes that appear as "perl")
+psjungle -s "node.*8080"     # Find processes containing the exact string "node.*8080" (will NOT match "node server running on port 8080")
+psjungle "node.*8080"        # Find processes matching the regex pattern (will match "node server running on port 8080")
+psjungle -s -w2 starman      # Watch mode with strict matching for processes containing "starman"
+```
+
+This is particularly useful for processes like starman that appear as "perl" in the process name but contain "starman" in their command line. The strict mode allows you to find these processes by searching for the exact string "starman" in their command line.
 
 ## Output Format
 
