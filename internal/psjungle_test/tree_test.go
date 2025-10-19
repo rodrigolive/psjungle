@@ -24,7 +24,7 @@ func TestBuildTreePrefixRoot(t *testing.T) {
 		Parent:   nil,
 	}
 
-	prefix := psjungle.BuildTreePrefix(rootNode, nil)
+	prefix := psjungle.BuildTreePrefix(rootNode, nil, false)
 	if prefix != "" {
 		t.Fatalf("expected empty prefix for root node, got %q", prefix)
 	}
@@ -59,7 +59,7 @@ func TestBuildTreePrefixChildGlyphs(t *testing.T) {
 
 	rootNode.Children = append(rootNode.Children, childNode)
 
-	prefix := psjungle.BuildTreePrefix(childNode, nil)
+	prefix := psjungle.BuildTreePrefix(childNode, nil, false)
 	if prefix != "" && !regexp.MustCompile(`[├└]`).MatchString(prefix) {
 		t.Fatalf("expected prefix to contain tree glyphs, got %q", prefix)
 	}
