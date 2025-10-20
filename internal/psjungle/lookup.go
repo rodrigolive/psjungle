@@ -104,7 +104,8 @@ func ByRegex(pattern string, strict bool) ([]int, error) {
 }
 
 // ByPort returns PIDs that have a connection bound to or communicating with the given port.
-func ByPort(port uint32) ([]int, error) {
+// By default, it looks for listening connections on all hosts.
+func ByPort(port uint32, host string) ([]int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -118,9 +119,35 @@ func ByPort(port uint32) ([]int, error) {
 		if conn.Pid == 0 {
 			continue
 		}
-		if conn.Laddr.Port != port && conn.Raddr.Port != port {
+
+		// Check port match first
+		portMatch := (conn.Laddr.Port == port || conn.Raddr.Port == port)
+		if !portMatch {
 			continue
 		}
+
+		// Check if we're filtering by host
+		if host != "" {
+			// For host filtering, we only check listening connections
+			if conn.Status != "LISTEN" {
+				continue
+			}
+			// Check if the local address matches the specified host
+			// Handle special cases: "*" means all hosts, so it should match any host filter
+			hostMatch := (conn.Laddr.IP == host || conn.Laddr.IP == "*" ||
+				(host == "127.0.0.1" && conn.Laddr.IP == "localhost") ||
+				(host == "localhost" && conn.Laddr.IP == "127.0.0.1"))
+			if !hostMatch {
+				continue
+			}
+		} else {
+			// Default behavior: look for listening connections on all hosts
+			// Skip non-listening connections unless they're communicating on the specified port
+			if conn.Status != "LISTEN" && conn.Laddr.Port != port && conn.Raddr.Port != port {
+				continue
+			}
+		}
+
 		if _, ok := seen[conn.Pid]; ok {
 			continue
 		}

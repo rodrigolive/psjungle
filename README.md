@@ -80,7 +80,9 @@ Examples:
 
 ```bash
 psjungle 1234                     # Inspect the tree for PID 1234
-psjungle :8080                    # Show trees for processes bound to port 8080
+psjungle :8080                    # Show trees for processes bound to port 8080 (all hosts)
+psjungle :8080 --host localhost   # Show trees for processes listening on port 8080 on localhost only
+psjungle :8080 --host 0.0.0.0     # Show trees for processes listening on port 8080 on all interfaces
 psjungle node                     # Regex match processes whose name contains "node"
 psjungle "node.*8080"             # Regex match against command line / name
 psjungle -s "node.*8080"          # Strict match for processes with exact string "node.*8080"
@@ -90,6 +92,7 @@ psjungle -w 1234                  # Refresh every 2 seconds (default) while show
 psjungle -w=5 :3000               # Refresh every 5 seconds for port 3000 listeners
 psjungle -w2 1234                 # Refresh every 2 seconds while showing PID 1234 (alternative format)
 psjungle -s -w2 starman           # Watch mode with strict matching for "starman"
+psjungle -s -w2 starman --host localhost  # Watch mode with strict matching for "starman" on localhost only
 ```
 
 Multiple PID Examples:
