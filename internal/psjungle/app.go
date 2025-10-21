@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -369,6 +370,37 @@ func formatMemory(memoryKB uint64) string {
 	}
 }
 
+// filterMacOSKernelDetails removes extra macOS kernel details from command line output
+func filterMacOSKernelDetails(cmdline string) string {
+	// Only apply filtering on macOS
+	if runtime.GOOS != "darwin" {
+		return cmdline
+	}
+
+	// Remove macOS-specific kernel metadata that appears in process command lines
+	// These details are not useful for most users and clutter the display
+	macOSPatterns := []string{
+		"ptr_munge=[^ ]*",
+		"main_stack=[^ ]*",
+		"executable_file=[^ ]*",
+		"dyld_file=[^ ]*",
+		"arm64e_abi=[^ ]*",
+		"th_port=[^ ]*",
+		"security_config=[^ ]*",
+	}
+
+	for _, pattern := range macOSPatterns {
+		re := regexp.MustCompile(pattern)
+		cmdline = re.ReplaceAllString(cmdline, "")
+	}
+
+	// Clean up extra whitespace that might be left behind
+	cmdline = regexp.MustCompile(`\s+`).ReplaceAllString(cmdline, " ")
+	cmdline = strings.TrimSpace(cmdline)
+
+	return cmdline
+}
+
 // defineFlags returns the CLI flags for the psjungle application
 func defineFlags() []cli.Flag {
 	return []cli.Flag{
@@ -475,6 +507,9 @@ func printNodeWithTree(node *ProcessNode, targetPid int, nextSiblings []*Process
 	if cmdline == "" {
 		cmdline = name
 	}
+
+	// Filter out extra macOS kernel details from command line
+	cmdline = filterMacOSKernelDetails(cmdline)
 
 	// Format memory usage in human-readable way
 	memStr := formatMemory(rss)
