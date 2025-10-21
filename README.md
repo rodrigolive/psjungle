@@ -153,5 +153,8 @@ This project uses GitHub Actions for continuous integration and release manageme
 
 - `.github/workflows/build.yml` - Runs tests and builds on push to main branch and pull requests
 - `.github/workflows/release.yml` - Creates releases with binary archives when tags are pushed
+- `.github/workflows/version-bump.yml` - Automatically detects version bumps and creates releases
 
-To create a new release, push a tag with semantic versioning (e.g., `git tag v1.2 && git push origin v1.2`).
+To create a new release, simply update the `version.txt` file with the new semantic version (e.g., `v1.3`) and push to the main branch. The version bump workflow will automatically detect the change, create a git tag, and trigger the release workflow.
+
+You can also manually create a release by pushing a tag with semantic versioning (e.g., `git tag v1.2 && git push origin v1.2`).

@@ -334,14 +334,6 @@ func parseSignal(signalStr string) (syscall.Signal, error) {
 		return syscall.SIGINT, nil
 	case "kill":
 		return syscall.SIGKILL, nil
-	case "stop":
-		return syscall.SIGSTOP, nil
-	case "cont":
-		return syscall.SIGCONT, nil
-	case "usr1":
-		return syscall.SIGUSR1, nil
-	case "usr2":
-		return syscall.SIGUSR2, nil
 	default:
 		// Try to parse as a number
 		if sigNum, err := strconv.Atoi(signalStr); err == nil {

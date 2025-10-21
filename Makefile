@@ -21,6 +21,10 @@ test:
 install: build
 	go install ./cmd/psjungle
 
+# Create release archives
+release:
+	./scripts/build-release.sh
+
 # Help
 help:
 	@echo "Available targets:"
@@ -29,6 +33,7 @@ help:
 	@echo "  deps    - Install/update dependencies"
 	@echo "  test    - Run tests"
 	@echo "  install - Build and install binary to GOPATH"
+	@echo "  release - Create release archives for all platforms"
 	@echo "  help    - Show this help"
 
 .PHONY: build clean deps test install help

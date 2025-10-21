@@ -16,10 +16,6 @@ func isKnownSignal(s string) bool {
 		"hup":  true,
 		"int":  true,
 		"kill": true,
-		"stop": true,
-		"cont": true,
-		"usr1": true,
-		"usr2": true,
 	}
 	_, exists := knownSignals[strings.ToLower(s)]
 	return exists
