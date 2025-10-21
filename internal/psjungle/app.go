@@ -138,80 +138,45 @@ func findParentChain(targetPid int32, procMap map[int32]*process.Process) ([]int
 	return chain, nil
 }
 
-// buildFocusedTree builds a tree focused on the target process and its ancestors/descendants
-func buildFocusedTree(targetPid int, procMap map[int32]*process.Process) *ProcessNode {
-	targetProc, exists := procMap[int32(targetPid)]
-	if !exists {
-		// Try to get target process directly
-		p, err := process.NewProcess(int32(targetPid))
-		if err != nil {
-			return nil
-		}
-		targetProc = p
+// createMinimalTree creates a minimal process tree with just the target process and its children
+func createMinimalTree(targetProc *process.Process, procMap map[int32]*process.Process) *ProcessNode {
+	node := &ProcessNode{
+		Process:  targetProc,
+		Children: []*ProcessNode{},
+		Depth:    0,
+		IsTarget: true,
+		Parent:   nil,
 	}
+	visited := make(map[int32]bool)
+	addChildren(node, procMap, visited, 1)
+	return node
+}
 
-	// Find parent chain up to PID 1
-	parentChain, err := findParentChain(int32(targetPid), procMap)
-	if err != nil {
-		// If we can't get parents, just build a tree with the target process and its children
-		node := &ProcessNode{
-			Process:  targetProc,
-			Children: []*ProcessNode{},
-			Depth:    0,
-			IsTarget: true,
-			Parent:   nil,
-		}
-		visited := make(map[int32]bool)
-		addChildren(node, procMap, visited, 1)
-		return node
-	}
-
-	// If parentChain is empty, build a minimal tree
-	if len(parentChain) == 0 {
-		node := &ProcessNode{
-			Process:  targetProc,
-			Children: []*ProcessNode{},
-			Depth:    0,
-			IsTarget: true,
-			Parent:   nil,
-		}
-		visited := make(map[int32]bool)
-		addChildren(node, procMap, visited, 1)
-		return node
-	}
-
-	// Build the direct chain from PID 1 to target process
-	var rootNode *ProcessNode
-	var currentNode *ProcessNode
-
-	// Start with PID 1
+// getRootProcessNode gets or creates the root process node (PID 1)
+func getRootProcessNode(procMap map[int32]*process.Process) (*ProcessNode, error) {
 	rootProc, exists := procMap[1]
 	if !exists {
 		p, err := process.NewProcess(1)
 		if err != nil {
-			// If we can't get PID 1, just build a tree with the target process and its children
-			node := &ProcessNode{
-				Process:  targetProc,
-				Children: []*ProcessNode{},
-				Depth:    0,
-				IsTarget: true,
-				Parent:   nil,
-			}
-			visited := make(map[int32]bool)
-			addChildren(node, procMap, visited, 1)
-			return node
+			return nil, err
 		}
 		rootProc = p
 	}
 
-	rootNode = &ProcessNode{
+	rootNode := &ProcessNode{
 		Process:  rootProc,
 		Children: []*ProcessNode{},
 		Depth:    0,
 		IsTarget: false,
 		Parent:   nil,
 	}
-	currentNode = rootNode
+
+	return rootNode, nil
+}
+
+// buildParentChainNodes builds the chain of parent nodes from root to target
+func buildParentChainNodes(rootNode *ProcessNode, parentChain []int32, targetPid int, procMap map[int32]*process.Process) *ProcessNode {
+	currentNode := rootNode
 
 	// Build nodes for each process in the parent chain (excluding PID 1 which we already created)
 	for _, pid := range parentChain {
@@ -246,7 +211,11 @@ func buildFocusedTree(targetPid int, procMap map[int32]*process.Process) *Proces
 		currentNode = node
 	}
 
-	// Add the target node
+	return currentNode
+}
+
+// addTargetNode adds the target process node to the tree
+func addTargetNode(currentNode *ProcessNode, targetProc *process.Process) *ProcessNode {
 	targetNode := &ProcessNode{
 		Process:  targetProc,
 		Children: []*ProcessNode{},
@@ -254,7 +223,47 @@ func buildFocusedTree(targetPid int, procMap map[int32]*process.Process) *Proces
 		IsTarget: true,
 		Parent:   currentNode,
 	}
+
 	currentNode.Children = append(currentNode.Children, targetNode)
+	return targetNode
+}
+
+// buildFocusedTree builds a tree focused on the target process and its ancestors/descendants
+func buildFocusedTree(targetPid int, procMap map[int32]*process.Process) *ProcessNode {
+	targetProc, exists := procMap[int32(targetPid)]
+	if !exists {
+		// Try to get target process directly
+		p, err := process.NewProcess(int32(targetPid))
+		if err != nil {
+			return nil
+		}
+		targetProc = p
+	}
+
+	// Find parent chain up to PID 1
+	parentChain, err := findParentChain(int32(targetPid), procMap)
+	if err != nil {
+		// If we can't get parents, just build a tree with the target process and its children
+		return createMinimalTree(targetProc, procMap)
+	}
+
+	// If parentChain is empty, build a minimal tree
+	if len(parentChain) == 0 {
+		return createMinimalTree(targetProc, procMap)
+	}
+
+	// Get root process node (PID 1)
+	rootNode, err := getRootProcessNode(procMap)
+	if err != nil {
+		// If we can't get PID 1, just build a tree with the target process and its children
+		return createMinimalTree(targetProc, procMap)
+	}
+
+	// Build the chain of parent nodes from root to target
+	currentNode := buildParentChainNodes(rootNode, parentChain, targetPid, procMap)
+
+	// Add the target node
+	targetNode := addTargetNode(currentNode, targetProc)
 	currentNode = targetNode
 
 	// Add children of the target process
@@ -365,6 +374,42 @@ func formatMemory(memoryKB uint64) string {
 		} else {
 			return fmt.Sprintf("%.1fGB", gb)
 		}
+	}
+}
+
+// defineFlags returns the CLI flags for the psjungle application
+func defineFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{
+			Name:    "watch",
+			Aliases: []string{"w"},
+			Value:   "",
+			Usage:   "Watch mode with refresh interval. Use formats like -w=2, -w2, or -w 2 for 2 seconds refresh. Provide a PID/port/name to watch (only watches the first target when multiple targets are specified).",
+		},
+		&cli.BoolFlag{
+			Name:    "flat",
+			Aliases: []string{"f"},
+			Value:   false,
+			Usage:   "Flat mode - removes Unicode tree indentation and lists processes left-aligned",
+		},
+		&cli.BoolFlag{
+			Name:    "strict",
+			Aliases: []string{"s"},
+			Value:   false,
+			Usage:   "Strict mode - treats input as exact string to match, not as regex pattern",
+		},
+		&cli.StringFlag{
+			Name:    "host",
+			Aliases: []string{"H"},
+			Value:   "",
+			Usage:   "Filter port connections by specific host (e.g., 127.0.0.1 or 0.0.0.0). Only applies to :port syntax.",
+		},
+		&cli.StringFlag{
+			Name:    "kill",
+			Aliases: []string{"k"},
+			Value:   "",
+			Usage:   "Send signal to matching processes. Use formats like -k, -k=9, -k term. Only sends signal after displaying tree.",
+		},
 	}
 }
 
@@ -569,10 +614,9 @@ func getProcessTreePids(targetPid int) []int {
 	return pids
 }
 
-// runPstree dispatches based on user input and prints matching trees.
-// When multiple inputs are provided, they are all treated as PIDs.
-// Returns the list of PIDs that were processed.
-func runPstree(inputs []string, flatMode bool, strictMode bool, host string) ([]int, error) {
+// parseInputs determines which processes to display trees for based on input arguments.
+// Returns a list of PIDs to process.
+func parseInputs(inputs []string, strictMode bool, host string) ([]int, error) {
 	var allPids []int
 	var err error
 
@@ -633,10 +677,217 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) ([]
 		os.Exit(1)
 	}
 
+	return allPids, nil
+}
+
+// runPstree dispatches based on user input and prints matching trees.
+// When multiple inputs are provided, they are all treated as PIDs.
+// Returns the list of PIDs that were processed.
+func runPstree(inputs []string, flatMode bool, strictMode bool, host string) ([]int, error) {
+	allPids, err := parseInputs(inputs, strictMode, host)
+	if err != nil {
+		return nil, err
+	}
+
 	// For multiple PIDs, we want to avoid showing duplicate trees
 	// Keep track of processes already shown in a tree
 	shownPids := make(map[int]bool)
 
+	// Display process trees for all PIDs, but avoid duplicates
+	// Keep track of which PIDs we actually displayed trees for
+	return displayProcessTrees(allPids, flatMode, shownPids)
+}
+
+// appUsageText contains the extensive usage documentation for psjungle
+const appUsageText = `psjungle [options] [PID|:port|pattern]...
+
+EXAMPLES:
+   psjungle 1234               Display process tree for PID 1234
+   psjungle :8080              Display process trees for processes listening on port 8080
+   psjungle :8080 --host 127.0.0.1  Display process trees for processes listening on port 8080 on localhost only
+   psjungle :8080 --host 0.0.0.0    Display process trees for processes listening on port 8080 on all interfaces
+   psjungle node               Display process trees for processes matching "node" (regex pattern)
+   psjungle "node.*8080"        Display process trees for processes matching regex pattern
+   psjungle -s "node.*8080"    Display process trees for processes with exact string "node.*8080" in name or command line
+   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)
+   psjungle 1234 5678 9012     Display process trees for three PIDs
+   psjungle 1 1234 4321        Display process trees for root process and two other PIDs
+   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)
+   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)
+   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)
+   psjungle -s -w2 starman     Watch process trees for processes with "starman" in name or command line
+   psjungle -k 1234            Display process tree for PID 1234 and send SIGTERM to it
+   psjungle -k=9 :8080         Display process trees for processes on port 8080 and send SIGKILL to them
+   psjungle -k hup node        Display process trees for processes matching "node" and send SIGHUP to them
+
+By default, patterns are treated as regex. Use the -s/--strict flag to match exact strings.
+When multiple arguments are provided, they are all treated as PIDs and psjungle intelligently
+shows separate process trees only when needed (when PIDs are not in the same process tree).
+Use the --host flag to filter port connections by specific host. Only applies to :port syntax.
+Use the --kill/-k flag to send signals to matching processes after displaying trees.
+
+Output format: PID CPU% Memory CommandLine
+Memory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.`
+
+// NewApp builds the CLI application configuration.
+func NewApp() *cli.App {
+	app := &cli.App{
+		Name:      "psjungle",
+		Usage:     "Display process trees for PIDs, ports, or patterns (regex by default, strict string with -s flag)",
+		UsageText: appUsageText,
+		Flags:     defineFlags(),
+		Action: func(c *cli.Context) error {
+			flatMode := c.Bool("flat")
+			strictMode := c.Bool("strict")
+
+			// Get all inputs (all non-flag arguments)
+			inputs := make([]string, c.NArg())
+			for i := 0; i < c.NArg(); i++ {
+				inputs[i] = c.Args().Get(i)
+			}
+
+			host := c.String("host")
+			killValue := c.String("kill")
+
+			// Check if watch flag was explicitly set
+			if c.IsSet("watch") {
+				// Validate arguments for watch mode
+				if c.NArg() < 1 {
+					cli.ShowAppHelp(c)
+					return cli.Exit("Watch mode requires at least one target PID/port/name", 1)
+				}
+				return handleWatchMode(c, inputs, flatMode, strictMode, host, killValue)
+			}
+
+			return handleNormalMode(c, inputs, flatMode, strictMode, host, killValue)
+		},
+	}
+
+	return app
+}
+
+// handleWatchMode processes the watch mode functionality
+func handleWatchMode(c *cli.Context, inputs []string, flatMode bool, strictMode bool, host string, killValue string) error {
+	watchValue := c.String("watch")
+
+	// Parse watch interval from flag value
+	watchInterval := 2 // default to 2 seconds
+	if watchValue != "" {
+		// Remove '=' if present in flag (e.g., -w=2)
+		value := strings.TrimPrefix(watchValue, "=")
+		if i, err := strconv.Atoi(value); err == nil {
+			watchInterval = i
+		}
+	}
+
+	var killSignal syscall.Signal
+	var useKill bool
+
+	// Parse kill signal if kill flag is set
+	if c.IsSet("kill") {
+		var err error
+		killSignal, err = parseSignal(killValue)
+		if err != nil {
+			return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
+		}
+		useKill = true
+	}
+
+	for {
+		// Clear screen
+		fmt.Print("\033[H\033[2J")
+		// Print status line with all targets
+		fmt.Printf("Every %.1fs: psjungle -w%s", float64(watchInterval), watchValue)
+		if strictMode {
+			fmt.Print(" -s")
+		}
+		if host != "" {
+			fmt.Printf(" --host %s", host)
+		}
+		if useKill {
+			if killValue == "" {
+				fmt.Print(" -k")
+			} else {
+				fmt.Printf(" -k=%s", killValue)
+			}
+		}
+		for _, input := range inputs {
+			fmt.Printf(" %s", input)
+		}
+		fmt.Println()
+		fmt.Println()
+		// Run pstree and get the list of processed PIDs
+		processedPids, err := runPstree(inputs, flatMode, strictMode, host)
+		if err != nil {
+			return cli.Exit(err.Error(), 1)
+		}
+
+		// If kill flag is set, send signal to processed PIDs
+		if useKill {
+			// Send signal to all processed PIDs
+			for _, pid := range processedPids {
+				proc, err := process.NewProcess(int32(pid))
+				if err != nil {
+					fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
+					continue
+				}
+
+				// Send the signal
+				if err := proc.SendSignal(killSignal); err != nil {
+					fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
+				} else {
+					fmt.Printf("Sent signal %d to PID %d\n", killSignal, pid)
+				}
+			}
+		}
+		time.Sleep(time.Duration(watchInterval) * time.Second)
+	}
+}
+
+// handleNormalMode processes the normal (non-watch) mode functionality
+func handleNormalMode(c *cli.Context, inputs []string, flatMode bool, strictMode bool, host string, killValue string) error {
+	// If we get here and have no arguments, show help
+	if c.NArg() < 1 {
+		cli.ShowAppHelp(c)
+		return cli.Exit("", 1)
+	}
+
+	// Run pstree and get the list of processed PIDs
+	processedPids, err := runPstree(inputs, flatMode, strictMode, host)
+	if err != nil {
+		return cli.Exit(err.Error(), 1)
+	}
+
+	// If kill flag is set, send signal to processed PIDs
+	if c.IsSet("kill") {
+		signal, err := parseSignal(killValue)
+		if err != nil {
+			return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
+		}
+
+		// Send signal to all processed PIDs
+		for _, pid := range processedPids {
+			proc, err := process.NewProcess(int32(pid))
+			if err != nil {
+				fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
+				continue
+			}
+
+			// Send the signal
+			if err := proc.SendSignal(signal); err != nil {
+				fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
+			} else {
+				fmt.Printf("Sent signal %d to PID %d\n", signal, pid)
+			}
+		}
+	}
+
+	return nil
+}
+
+// displayProcessTrees shows process trees for all PIDs, avoiding duplicates
+// Returns the list of PIDs that were processed (had trees displayed)
+func displayProcessTrees(allPids []int, flatMode bool, shownPids map[int]bool) ([]int, error) {
 	// Display process trees for all PIDs, but avoid duplicates
 	// Keep track of which PIDs we actually displayed trees for
 	var processedPids []int
@@ -686,194 +937,6 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) ([]
 	}
 
 	return processedPids, nil
-}
-
-// NewApp builds the CLI application configuration.
-func NewApp() *cli.App {
-	app := &cli.App{
-		Name:      "psjungle",
-		Usage:     "Display process trees for PIDs, ports, or patterns (regex by default, strict string with -s flag)",
-		UsageText: "psjungle [options] [PID|:port|pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle :8080 --host 127.0.0.1  Display process trees for processes listening on port 8080 on localhost only\n   psjungle :8080 --host 0.0.0.0    Display process trees for processes listening on port 8080 on all interfaces\n   psjungle node               Display process trees for processes matching \"node\" (regex pattern)\n   psjungle \"node.*8080\"        Display process trees for processes matching regex pattern\n   psjungle -s \"node.*8080\"    Display process trees for processes with exact string \"node.*8080\" in name or command line\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle 1234 5678 9012     Display process trees for three PIDs\n   psjungle 1 1234 4321        Display process trees for root process and two other PIDs\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -s -w2 starman     Watch process trees for processes with \"starman\" in name or command line\n   psjungle -k 1234            Display process tree for PID 1234 and send SIGTERM to it\n   psjungle -k=9 :8080         Display process trees for processes on port 8080 and send SIGKILL to them\n   psjungle -k hup node        Display process trees for processes matching \"node\" and send SIGHUP to them\n\nBy default, patterns are treated as regex. Use the -s/--strict flag to match exact strings.\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\nUse the --host flag to filter port connections by specific host. Only applies to :port syntax.\nUse the --kill/-k flag to send signals to matching processes after displaying trees.\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:    "watch",
-				Aliases: []string{"w"},
-				Value:   "",
-				Usage:   "Watch mode with refresh interval. Use formats like -w=2, -w2, or -w 2 for 2 seconds refresh. Provide a PID/port/name to watch (only watches the first target when multiple targets are specified).",
-			},
-			&cli.BoolFlag{
-				Name:    "flat",
-				Aliases: []string{"f"},
-				Value:   false,
-				Usage:   "Flat mode - removes Unicode tree indentation and lists processes left-aligned",
-			},
-			&cli.BoolFlag{
-				Name:    "strict",
-				Aliases: []string{"s"},
-				Value:   false,
-				Usage:   "Strict mode - treats input as exact string to match, not as regex pattern",
-			},
-			&cli.StringFlag{
-				Name:    "host",
-				Aliases: []string{"H"},
-				Value:   "",
-				Usage:   "Filter port connections by specific host (e.g., 127.0.0.1 or 0.0.0.0). Only applies to :port syntax.",
-			},
-			&cli.StringFlag{
-				Name:    "kill",
-				Aliases: []string{"k"},
-				Value:   "",
-				Usage:   "Send signal to matching processes. Use formats like -k, -k=9, -k term. Only sends signal after displaying tree.",
-			},
-		},
-		Action: func(c *cli.Context) error {
-			watchValue := c.String("watch")
-			flatMode := c.Bool("flat")
-			strictMode := c.Bool("strict")
-
-			// Check if watch flag was explicitly set
-			if c.IsSet("watch") {
-				// Parse watch interval from flag value
-				watchInterval := 2 // default to 2 seconds
-				if watchValue != "" {
-					// Remove '=' if present in flag (e.g., -w=2)
-					value := strings.TrimPrefix(watchValue, "=")
-					if i, err := strconv.Atoi(value); err == nil {
-						watchInterval = i
-					}
-				}
-
-				// Get all targets from the remaining arguments
-				if c.NArg() < 1 {
-					// No target provided
-					cli.ShowAppHelp(c)
-					return cli.Exit("Watch mode requires at least one target PID/port/name", 1)
-				}
-
-				// Get all inputs (all non-flag arguments)
-				inputs := make([]string, c.NArg())
-				for i := 0; i < c.NArg(); i++ {
-					inputs[i] = c.Args().Get(i)
-				}
-
-				// Watch mode
-				host := c.String("host")
-				killValue := c.String("kill")
-				var killSignal syscall.Signal
-				var useKill bool
-
-				// Parse kill signal if kill flag is set
-				if c.IsSet("kill") {
-					var err error
-					killSignal, err = parseSignal(killValue)
-					if err != nil {
-						return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
-					}
-					useKill = true
-				}
-
-				for {
-					// Clear screen
-					fmt.Print("\033[H\033[2J")
-					// Print status line with all targets
-					fmt.Printf("Every %.1fs: psjungle -w%s", float64(watchInterval), watchValue)
-					if strictMode {
-						fmt.Print(" -s")
-					}
-					if host != "" {
-						fmt.Printf(" --host %s", host)
-					}
-					if useKill {
-						if killValue == "" {
-							fmt.Print(" -k")
-						} else {
-							fmt.Printf(" -k=%s", killValue)
-						}
-					}
-					for _, input := range inputs {
-						fmt.Printf(" %s", input)
-					}
-					fmt.Println()
-					fmt.Println()
-					// Run pstree and get the list of processed PIDs
-					processedPids, err := runPstree(inputs, flatMode, strictMode, host)
-					if err != nil {
-						return cli.Exit(err.Error(), 1)
-					}
-
-					// If kill flag is set, send signal to processed PIDs
-					if useKill {
-						// Send signal to all processed PIDs
-						for _, pid := range processedPids {
-							proc, err := process.NewProcess(int32(pid))
-							if err != nil {
-								fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
-								continue
-							}
-
-							// Send the signal
-							if err := proc.SendSignal(killSignal); err != nil {
-								fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
-							} else {
-								fmt.Printf("Sent signal %d to PID %d\n", killSignal, pid)
-							}
-						}
-					}
-					time.Sleep(time.Duration(watchInterval) * time.Second)
-				}
-			}
-
-			// If we get here and have no arguments, show help
-			if c.NArg() < 1 {
-				cli.ShowAppHelp(c)
-				return cli.Exit("", 1)
-			}
-
-			// Get all inputs (all non-flag arguments)
-			inputs := make([]string, c.NArg())
-			for i := 0; i < c.NArg(); i++ {
-				inputs[i] = c.Args().Get(i)
-			}
-
-			// Normal mode - handle multiple PIDs
-			host := c.String("host")
-			killValue := c.String("kill")
-
-			// Run pstree and get the list of processed PIDs
-			processedPids, err := runPstree(inputs, flatMode, strictMode, host)
-			if err != nil {
-				return cli.Exit(err.Error(), 1)
-			}
-
-			// If kill flag is set, send signal to processed PIDs
-			if c.IsSet("kill") {
-				signal, err := parseSignal(killValue)
-				if err != nil {
-					return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
-				}
-
-				// Send signal to all processed PIDs
-				for _, pid := range processedPids {
-					proc, err := process.NewProcess(int32(pid))
-					if err != nil {
-						fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
-						continue
-					}
-
-					// Send the signal
-					if err := proc.SendSignal(signal); err != nil {
-						fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
-					} else {
-						fmt.Printf("Sent signal %d to PID %d\n", signal, pid)
-					}
-				}
-			}
-
-			return nil
-		},
-	}
-
-	return app
 }
 
 // Run executes the CLI application with provided args.
