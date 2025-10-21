@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/process"
@@ -313,6 +314,37 @@ func adjustDepths(node *ProcessNode, depth int) {
 	}
 }
 
+// parseSignal parses a signal string and returns the corresponding syscall.Signal
+func parseSignal(signalStr string) (syscall.Signal, error) {
+	switch strings.ToLower(signalStr) {
+	case "", "term":
+		return syscall.SIGTERM, nil
+	case "hup":
+		return syscall.SIGHUP, nil
+	case "int":
+		return syscall.SIGINT, nil
+	case "kill":
+		return syscall.SIGKILL, nil
+	case "stop":
+		return syscall.SIGSTOP, nil
+	case "cont":
+		return syscall.SIGCONT, nil
+	case "usr1":
+		return syscall.SIGUSR1, nil
+	case "usr2":
+		return syscall.SIGUSR2, nil
+	default:
+		// Try to parse as a number
+		if sigNum, err := strconv.Atoi(signalStr); err == nil {
+			// Validate that it's a valid signal number
+			if sigNum >= 0 && sigNum <= 64 { // Most systems have signals in this range
+				return syscall.Signal(sigNum), nil
+			}
+		}
+		return 0, fmt.Errorf("invalid signal: %s", signalStr)
+	}
+}
+
 // formatMemory formats memory usage in a human-readable way
 func formatMemory(memoryKB uint64) string {
 	if memoryKB < 1000 {
@@ -539,7 +571,8 @@ func getProcessTreePids(targetPid int) []int {
 
 // runPstree dispatches based on user input and prints matching trees.
 // When multiple inputs are provided, they are all treated as PIDs.
-func runPstree(inputs []string, flatMode bool, strictMode bool, host string) error {
+// Returns the list of PIDs that were processed.
+func runPstree(inputs []string, flatMode bool, strictMode bool, host string) ([]int, error) {
 	var allPids []int
 	var err error
 
@@ -550,13 +583,13 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 			if regexp.MustCompile(`^\d+$`).MatchString(input) {
 				pid, convErr := strconv.Atoi(input)
 				if convErr != nil {
-					return fmt.Errorf("invalid PID '%s'", input)
+					return nil, fmt.Errorf("invalid PID '%s'", input)
 				}
 				allPids = append(allPids, pid)
 			} else {
 				// For non-numeric inputs when we have multiple arguments,
 				// we could extend this but for now we'll treat them as invalid
-				return fmt.Errorf("invalid PID '%s'", input)
+				return nil, fmt.Errorf("invalid PID '%s'", input)
 			}
 		}
 	} else if len(inputs) == 1 {
@@ -568,7 +601,7 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 		if regexp.MustCompile(`^\d+$`).MatchString(input) {
 			pid, convErr := strconv.Atoi(input)
 			if convErr != nil {
-				return fmt.Errorf("invalid PID '%s'", input)
+				return nil, fmt.Errorf("invalid PID '%s'", input)
 			}
 			pids = []int{pid}
 		} else if strings.HasPrefix(input, ":") {
@@ -576,23 +609,23 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 			port := strings.TrimPrefix(input, ":")
 			portNum, convErr := strconv.Atoi(port)
 			if convErr != nil || portNum < 0 || portNum > 65535 {
-				return fmt.Errorf("invalid port '%s'", port)
+				return nil, fmt.Errorf("invalid port '%s'", port)
 			}
 			pids, err = ByPort(uint32(portNum), host)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		} else {
 			// Regex or strict string matching
 			pids, err = ByRegex(input, strictMode)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 
 		allPids = pids
 	} else {
-		return fmt.Errorf("no input provided")
+		return nil, fmt.Errorf("no input provided")
 	}
 
 	if len(allPids) == 0 {
@@ -605,6 +638,8 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 	shownPids := make(map[int]bool)
 
 	// Display process trees for all PIDs, but avoid duplicates
+	// Keep track of which PIDs we actually displayed trees for
+	var processedPids []int
 	firstTree := true
 	for _, pid := range allPids {
 		// Skip if process doesn't exist
@@ -638,6 +673,9 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 				fmt.Printf("Error for PID %d: %v\n", pid, err)
 			}
 
+			// Add the target PID to our processed list
+			processedPids = append(processedPids, pid)
+
 			// Mark all processes in this tree as shown
 			for _, treePid := range treePids {
 				shownPids[treePid] = true
@@ -647,7 +685,7 @@ func runPstree(inputs []string, flatMode bool, strictMode bool, host string) err
 		}
 	}
 
-	return nil
+	return processedPids, nil
 }
 
 // NewApp builds the CLI application configuration.
@@ -655,7 +693,7 @@ func NewApp() *cli.App {
 	app := &cli.App{
 		Name:      "psjungle",
 		Usage:     "Display process trees for PIDs, ports, or patterns (regex by default, strict string with -s flag)",
-		UsageText: "psjungle [options] [PID|:port|pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle :8080 --host 127.0.0.1  Display process trees for processes listening on port 8080 on localhost only\n   psjungle :8080 --host 0.0.0.0    Display process trees for processes listening on port 8080 on all interfaces\n   psjungle node               Display process trees for processes matching \"node\" (regex pattern)\n   psjungle \"node.*8080\"        Display process trees for processes matching regex pattern\n   psjungle -s \"node.*8080\"    Display process trees for processes with exact string \"node.*8080\" in name or command line\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle 1234 5678 9012     Display process trees for three PIDs\n   psjungle 1 1234 4321        Display process trees for root process and two other PIDs\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -s -w2 starman     Watch process trees for processes with \"starman\" in name or command line\n\nBy default, patterns are treated as regex. Use the -s/--strict flag to match exact strings.\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\nUse the --host flag to filter port connections by specific host. Only applies to :port syntax.\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
+		UsageText: "psjungle [options] [PID|:port|pattern]...\n\nEXAMPLES:\n   psjungle 1234               Display process tree for PID 1234\n   psjungle :8080              Display process trees for processes listening on port 8080\n   psjungle :8080 --host 127.0.0.1  Display process trees for processes listening on port 8080 on localhost only\n   psjungle :8080 --host 0.0.0.0    Display process trees for processes listening on port 8080 on all interfaces\n   psjungle node               Display process trees for processes matching \"node\" (regex pattern)\n   psjungle \"node.*8080\"        Display process trees for processes matching regex pattern\n   psjungle -s \"node.*8080\"    Display process trees for processes with exact string \"node.*8080\" in name or command line\n   psjungle 1234 5678          Display process trees for multiple PIDs (intelligently shows separate trees only when needed)\n   psjungle 1234 5678 9012     Display process trees for three PIDs\n   psjungle 1 1234 4321        Display process trees for root process and two other PIDs\n   psjungle -w 1234            Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -w=5 :3000          Watch processes listening on port 3000 (refresh every 5 seconds)\n   psjungle -w2 1234           Watch process tree for PID 1234 (refresh every 2 seconds)\n   psjungle -s -w2 starman     Watch process trees for processes with \"starman\" in name or command line\n   psjungle -k 1234            Display process tree for PID 1234 and send SIGTERM to it\n   psjungle -k=9 :8080         Display process trees for processes on port 8080 and send SIGKILL to them\n   psjungle -k hup node        Display process trees for processes matching \"node\" and send SIGHUP to them\n\nBy default, patterns are treated as regex. Use the -s/--strict flag to match exact strings.\nWhen multiple arguments are provided, they are all treated as PIDs and psjungle intelligently\nshows separate process trees only when needed (when PIDs are not in the same process tree).\nUse the --host flag to filter port connections by specific host. Only applies to :port syntax.\nUse the --kill/-k flag to send signals to matching processes after displaying trees.\n\nOutput format: PID CPU% Memory CommandLine\nMemory usage is shown in human-readable format (KB/MB/GB). Processes are highlighted in green.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "watch",
@@ -680,6 +718,12 @@ func NewApp() *cli.App {
 				Aliases: []string{"H"},
 				Value:   "",
 				Usage:   "Filter port connections by specific host (e.g., 127.0.0.1 or 0.0.0.0). Only applies to :port syntax.",
+			},
+			&cli.StringFlag{
+				Name:    "kill",
+				Aliases: []string{"k"},
+				Value:   "",
+				Usage:   "Send signal to matching processes. Use formats like -k, -k=9, -k term. Only sends signal after displaying tree.",
 			},
 		},
 		Action: func(c *cli.Context) error {
@@ -714,6 +758,20 @@ func NewApp() *cli.App {
 
 				// Watch mode
 				host := c.String("host")
+				killValue := c.String("kill")
+				var killSignal syscall.Signal
+				var useKill bool
+
+				// Parse kill signal if kill flag is set
+				if c.IsSet("kill") {
+					var err error
+					killSignal, err = parseSignal(killValue)
+					if err != nil {
+						return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
+					}
+					useKill = true
+				}
+
 				for {
 					// Clear screen
 					fmt.Print("\033[H\033[2J")
@@ -725,13 +783,41 @@ func NewApp() *cli.App {
 					if host != "" {
 						fmt.Printf(" --host %s", host)
 					}
+					if useKill {
+						if killValue == "" {
+							fmt.Print(" -k")
+						} else {
+							fmt.Printf(" -k=%s", killValue)
+						}
+					}
 					for _, input := range inputs {
 						fmt.Printf(" %s", input)
 					}
 					fmt.Println()
 					fmt.Println()
-					if err := runPstree(inputs, flatMode, strictMode, host); err != nil {
+					// Run pstree and get the list of processed PIDs
+					processedPids, err := runPstree(inputs, flatMode, strictMode, host)
+					if err != nil {
 						return cli.Exit(err.Error(), 1)
+					}
+
+					// If kill flag is set, send signal to processed PIDs
+					if useKill {
+						// Send signal to all processed PIDs
+						for _, pid := range processedPids {
+							proc, err := process.NewProcess(int32(pid))
+							if err != nil {
+								fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
+								continue
+							}
+
+							// Send the signal
+							if err := proc.SendSignal(killSignal); err != nil {
+								fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
+							} else {
+								fmt.Printf("Sent signal %d to PID %d\n", killSignal, pid)
+							}
+						}
 					}
 					time.Sleep(time.Duration(watchInterval) * time.Second)
 				}
@@ -751,8 +837,36 @@ func NewApp() *cli.App {
 
 			// Normal mode - handle multiple PIDs
 			host := c.String("host")
-			if err := runPstree(inputs, flatMode, strictMode, host); err != nil {
+			killValue := c.String("kill")
+
+			// Run pstree and get the list of processed PIDs
+			processedPids, err := runPstree(inputs, flatMode, strictMode, host)
+			if err != nil {
 				return cli.Exit(err.Error(), 1)
+			}
+
+			// If kill flag is set, send signal to processed PIDs
+			if c.IsSet("kill") {
+				signal, err := parseSignal(killValue)
+				if err != nil {
+					return cli.Exit(fmt.Sprintf("Error parsing signal: %v", err), 1)
+				}
+
+				// Send signal to all processed PIDs
+				for _, pid := range processedPids {
+					proc, err := process.NewProcess(int32(pid))
+					if err != nil {
+						fmt.Printf("Warning: Could not create process object for PID %d: %v\n", pid, err)
+						continue
+					}
+
+					// Send the signal
+					if err := proc.SendSignal(signal); err != nil {
+						fmt.Printf("Warning: Could not send signal to PID %d: %v\n", pid, err)
+					} else {
+						fmt.Printf("Sent signal %d to PID %d\n", signal, pid)
+					}
+				}
 			}
 
 			return nil
