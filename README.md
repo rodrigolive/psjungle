@@ -5,7 +5,7 @@
                             ********
                            **  ******
                             *   ******     ******
-   PSJUNGLE  V1.1               ******   *********
+   PSJUNGLE  V1.2               ******   *********
                                  ****  *****   ***
                                  ***  ***     **
                            *************       *
@@ -36,6 +36,7 @@ context.
 - Watch mode (`-w` / `--watch`) for continuously refreshing output every *n* seconds.
 - Support for multiple PIDs as arguments, intelligently showing separate trees only when needed.
 - Strict mode (`-s` / `--strict`) for exact string matching instead of regex patterns.
+- Signal sending functionality (`-k` / `--kill`) to send signals to matching processes after displaying trees.
 - Pure Go implementation using `gopsutil` for cross-platform compatibility—no `exec.Command` usage.
 
 ## Why?
@@ -93,6 +94,9 @@ psjungle -w=5 :3000               # Refresh every 5 seconds for port 3000 listen
 psjungle -w2 1234                 # Refresh every 2 seconds while showing PID 1234 (alternative format)
 psjungle -s -w2 starman           # Watch mode with strict matching for "starman"
 psjungle -s -w2 starman --host localhost  # Watch mode with strict matching for "starman" on localhost only
+psjungle -k 1234                  # Display tree for PID 1234 and send SIGTERM to it
+psjungle -k=9 :8080               # Display trees for processes on port 8080 and send SIGKILL to them
+psjungle -k hup node              # Display trees for processes matching "node" and send SIGHUP to them
 ```
 
 Multiple PID Examples:
